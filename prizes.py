@@ -5,6 +5,7 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 from schema import ROOT
 
 CACHE = ROOT / "data" / "tracks_cache.json"
+PRIZES_PATH = ROOT / "data" / "prizes.json"
 HEAD = {"User-Agent": "PriorArt-HTN2026"}
 YEAR_HOST = re.compile(r"hackthenorth(\d{4})?\.devpost\.com", re.I)
 STOP = set(ENGLISH_STOP_WORDS) | {
@@ -257,6 +259,257 @@ BRAND_ALIASES = {
     "tether": ("tether", "qvac", "pear"),
     "ardupilot": ("ardupilot", "mavlink", "whiteout"),
 }
+
+_WIN_RE = re.compile(
+    r"\b(won|winner|winners|awarded|took home|first place|second place|third place)\b",
+    re.I,
+)
+_FINALIST_CLAIM_RE = re.compile(
+    r"\b(?:was|were|is|are|named|became)\s+(?:a\s+)?finalists?\b", re.I
+)
+_PRIZE_SPAN_RE = re.compile(
+    r"""
+    \bbest\s+use\s+of\s+(?:(?!(?:would|will|that|which|because)\b)[\w][\w+&/'’.-]*\s*){1,6}
+    |
+    \bbest\s+[\w][\w .&+/'’-]{0,40}?\s*(?:prize|prizes|challenge|track|award|hack|agent|tool|app|experience)\b
+    |
+    \b[\w][\w .&+/'’-]{1,50}\s+(?:prizes|prize|challenge|tracks|track|awards|award)\b
+    """,
+    re.I | re.X,
+)
+_GENERIC_PRIZE_SPANS = {
+    "prize",
+    "prizes",
+    "the prize",
+    "a prize",
+    "this prize",
+    "sponsor prize",
+    "sponsor prizes",
+    "prize track",
+    "prize tracks",
+    "sponsor track",
+    "sponsor tracks",
+    "track",
+    "tracks",
+    "the track",
+    "this track",
+    "challenge",
+    "the challenge",
+    "this challenge",
+    "a challenge",
+    "award",
+    "the award",
+    "an award",
+    "best",
+    "best use",
+    "best use of",
+    "hack",
+    "the hack",
+}
+_PRIZE_FILLER = {
+    "the",
+    "a",
+    "an",
+    "best",
+    "use",
+    "of",
+    "prize",
+    "prizes",
+    "challenge",
+    "track",
+    "tracks",
+    "award",
+    "hack",
+    "with",
+    "and",
+    "for",
+    "by",
+}
+
+
+def _norm_prize(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def load_prize_tracks(path: Path | None = None) -> list[dict[str, str]]:
+    """HTN 2026 sponsor tracks. Coach may name only these."""
+    src = path or PRIZES_PATH
+    if not src.exists():
+        return []
+    try:
+        raw = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(raw, list):
+        rows = raw
+    elif isinstance(raw, dict):
+        rows = raw.get("tracks") or raw.get("prizes") or []
+    else:
+        rows = []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if isinstance(row, str):
+            name = row.strip()
+            sponsor = name.split(":", 1)[0].strip() if ":" in name else ""
+            aliases: list[str] = []
+        elif isinstance(row, dict):
+            name = str(row.get("name") or "").strip()
+            sponsor = str(row.get("sponsor") or "").strip()
+            raw_aliases = row.get("aliases") or []
+            aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
+            if not sponsor and ":" in name:
+                sponsor = name.split(":", 1)[0].strip()
+        else:
+            continue
+        key = name.lower()
+        if not name or key in seen or "finalist" in key:
+            continue
+        seen.add(key)
+        out.append({"name": name, "sponsor": sponsor, "aliases": aliases})
+    return out
+
+
+def prize_prompt_names(tracks: list[dict[str, str]] | None = None) -> list[str]:
+    tracks = tracks if tracks is not None else load_prize_tracks()
+    return [t["name"] for t in tracks if t.get("name")]
+
+
+def _allowed_prize_index(
+    tracks: list[dict[str, str]],
+) -> tuple[list[str], set[str]]:
+    names: list[str] = []
+    sponsors: set[str] = set()
+    skip_parts = {
+        "computer",
+        "human",
+        "labs",
+        "lab",
+        "company",
+        "dynamics",
+        "americas",
+        "data",
+        "live",
+        "best",
+        "use",
+        "north",
+    }
+    for t in tracks:
+        name = _norm_prize(t.get("name") or "")
+        if name:
+            names.append(name)
+        sponsor = _norm_prize(t.get("sponsor") or "")
+        if len(sponsor) >= 3:
+            sponsors.add(sponsor)
+            for part in sponsor.split():
+                if len(part) >= 4 and part not in skip_parts:
+                    sponsors.add(part)
+        for alias in t.get("aliases") or []:
+            a = _norm_prize(str(alias))
+            if len(a) >= 3:
+                names.append(a)
+                if len(a.split()) == 1:
+                    sponsors.add(a)
+        m = re.search(r"best use of .+", t.get("name") or "", re.I)
+        if m:
+            names.append(_norm_prize(m.group(0)))
+    names = sorted({n for n in names if n}, key=len, reverse=True)
+    return names, sponsors
+
+
+def _span_is_allowed(span: str, names: list[str], sponsors: set[str]) -> bool:
+    n = _norm_prize(span)
+    if not n or n in _GENERIC_PRIZE_SPANS:
+        return True
+    for a in names:
+        if len(a) >= 8 and (a in n or n in a):
+            return True
+        if 4 <= len(a) < 8 and a == n:
+            return True
+    tokens = [tok for tok in n.split() if tok not in _PRIZE_FILLER]
+    for tok in tokens:
+        if tok in sponsors:
+            return True
+    joined = " ".join(tokens)
+    for s in sponsors:
+        if " " in s and s in n:
+            return True
+        if len(s) >= 4 and joined == s:
+            return True
+    return False
+
+
+def _historical_prize_phrases(projects, names: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in projects or []:
+        for prize in getattr(p, "prizes", None) or []:
+            if "finalist" in str(prize).lower():
+                continue
+            n = _norm_prize(str(prize))
+            if n in seen:
+                continue
+            if len(n) < 12 and not re.search(r"\b(best|prize|challenge|award)\b", n):
+                continue
+            if any(len(a) >= 8 and (a in n or n in a) for a in names):
+                continue
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def coach_move_violation(
+    text: str,
+    tracks: list[dict[str, str]] | None = None,
+    projects=None,
+) -> str | None:
+    """Why a coach move should be dropped, or None if it is clean."""
+    blob = text or ""
+    if _WIN_RE.search(blob):
+        return "claimed a win"
+    tracks = tracks if tracks is not None else load_prize_tracks()
+    names, sponsors = _allowed_prize_index(tracks)
+    for m in _PRIZE_SPAN_RE.finditer(blob):
+        span = m.group(0)
+        if not _span_is_allowed(span, names, sponsors):
+            return f"unnamed prize {span!r}"
+    hist = _historical_prize_phrases(projects, names)
+    norm_blob = _norm_prize(blob)
+    for phrase in hist:
+        if phrase and phrase in norm_blob:
+            return f"historical prize {phrase!r}"
+    if _FINALIST_CLAIM_RE.search(blob) and projects:
+        low = blob.lower()
+        ranked = sorted(
+            (p for p in projects if (p.title or "") and len(p.title) >= 5),
+            key=lambda p: len(p.title),
+            reverse=True,
+        )
+        for p in ranked:
+            title = p.title.lower()
+            if title in low and not p.finalist:
+                return f"non-finalist {p.title!r} called finalist"
+    return None
+
+
+def filter_coach_moves(
+    specs: list[dict[str, Any]],
+    tracks: list[dict[str, str]] | None = None,
+    projects=None,
+) -> list[dict[str, Any]]:
+    tracks = tracks if tracks is not None else load_prize_tracks()
+    kept: list[dict[str, Any]] = []
+    for spec in specs:
+        blob = " ".join(
+            str(spec.get(k) or "")
+            for k in ("label", "rationale", "reframed_description")
+        )
+        reason = coach_move_violation(blob, tracks=tracks, projects=projects)
+        if reason:
+            print(f"coach dropped move ({reason}): {spec.get('label')}")
+            continue
+        kept.append(spec)
+    return kept
 
 
 def parse_hackathon_url(raw: str) -> str | None:

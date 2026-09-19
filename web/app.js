@@ -26,6 +26,12 @@
   const coachBtn = document.getElementById("coach-btn");
   const coachStatus = document.getElementById("coach-status");
   const coachList = document.getElementById("coach-list");
+  const timeToggle = document.getElementById("coach-time-on");
+  const coachTime = document.getElementById("coach-time");
+  const coachHours = document.getElementById("coach-hours");
+  const budgetInput = document.getElementById("coach-budget");
+  let lastCoach = null;
+  let budgetTouched = false;
 
   const ACCENT = "#e8a317";
   const MUTE = "#3c3c42";
@@ -245,9 +251,50 @@
     ghostRaf = requestAnimationFrame(step);
   }
 
+  function timeAwareOn() {
+    return !!(timeToggle && timeToggle.checked);
+  }
+
+  function formatHoursLeft(hours) {
+    const n = Math.max(0, Number(hours) || 0);
+    const shown = Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
+    return `~${shown}h left in the build window`;
+  }
+
+  function formatEffort(hours) {
+    const n = Math.max(0, Number(hours) || 0);
+    const shown = Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
+    return `~${shown}h effort`;
+  }
+
+  function budgetValue(payload) {
+    if (budgetInput && budgetInput.value !== "") {
+      const n = Number(budgetInput.value);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    const fallback = payload && payload.time_budget_hours;
+    return Number.isFinite(Number(fallback)) ? Number(fallback) : 0;
+  }
+
+  function syncTimeUi(payload) {
+    const on = timeAwareOn();
+    if (coachTime) coachTime.hidden = !on;
+    if (!on) return;
+    const hours = payload && payload.hours_remaining;
+    if (coachHours) {
+      coachHours.textContent = hours == null ? "" : formatHoursLeft(hours);
+    }
+    if (budgetInput && !budgetTouched && hours != null && hours !== "") {
+      const n = Number(hours);
+      budgetInput.value = Number.isFinite(n) ? String(Math.round(n * 10) / 10) : "";
+    }
+  }
+
   function renderCoach(payload) {
     if (!coachList) return;
+    lastCoach = payload || lastCoach;
     coachList.innerHTML = "";
+    syncTimeUi(payload);
     const moves = (payload && payload.moves) || [];
     if (!moves.length) {
       if (coachStatus) {
@@ -257,22 +304,47 @@
       return;
     }
     if (coachStatus) coachStatus.hidden = true;
+    const aware = timeAwareOn();
+    const budget = budgetValue(payload);
     for (const move of moves) {
       const li = document.createElement("li");
-      li.className = "card coach-card";
+      const effort = Number(move.effort_hours);
+      const feasible = aware ? effort <= budget : true;
+      li.className = `card coach-card${aware && !feasible ? " is-late" : ""}`;
       const pct = Math.round((move.delta || 0) * 100);
       const signed = `${pct > 0 ? "+" : ""}${pct}%`;
+      let extra = "";
+      if (aware) {
+        extra = `<div class="coach-meta">
+          <span class="coach-effort">${escapeHtml(formatEffort(effort))}</span>
+          <span class="coach-badge${feasible ? " is-ok" : ""}">${feasible ? "feasible" : "too late"}</span>
+        </div>`;
+      }
       li.innerHTML = `
         <div class="card-top">
           <span class="card-title">${escapeHtml(move.label || "")}</span>
           <span class="coach-delta${pct < 0 ? " is-down" : ""}">${signed}</span>
         </div>
         <p class="card-tag">${escapeHtml(move.rationale || "")}</p>
+        ${extra}
       `;
       li.addEventListener("mouseenter", () => playGhost(move));
       li.addEventListener("mouseleave", clearGhost);
       coachList.appendChild(li);
     }
+  }
+
+  if (timeToggle) {
+    timeToggle.addEventListener("change", () => {
+      if (lastCoach) renderCoach(lastCoach);
+      else syncTimeUi(lastCoach);
+    });
+  }
+  if (budgetInput) {
+    budgetInput.addEventListener("input", () => {
+      budgetTouched = true;
+      if (lastCoach) renderCoach(lastCoach);
+    });
   }
 
   if (coachBtn) {
@@ -281,16 +353,22 @@
       if (!text) return;
       coachBtn.disabled = true;
       if (coachPanel) coachPanel.hidden = false;
+      syncTimeUi(lastCoach);
       if (coachStatus) {
         coachStatus.hidden = false;
         coachStatus.textContent = "Scoring a few moves through the classifier…";
       }
       coachList.innerHTML = "";
       try {
+        const body = { text };
+        if (timeAwareOn() && budgetInput && budgetInput.value !== "") {
+          const n = Number(budgetInput.value);
+          if (Number.isFinite(n) && n >= 0) body.time_budget_hours = n;
+        }
         const res = await fetch("/api/coach", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(await res.text());
         renderCoach(await res.json());
@@ -452,8 +530,10 @@
       renderProb(data);
       if (coachPanel) {
         coachPanel.hidden = true;
+        lastCoach = null;
         if (coachList) coachList.innerHTML = "";
         if (coachStatus) coachStatus.hidden = true;
+        if (coachTime) coachTime.hidden = !timeAwareOn();
       }
       const neighbours = document.getElementById("neighbours");
       if (neighbours) {

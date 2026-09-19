@@ -11,8 +11,10 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import joblib
 import numpy as np
@@ -26,6 +28,7 @@ DATA = ROOT / "data"
 MAP_PATH = DATA / "map.json"
 EMB_PATH = DATA / "embeddings.npy"
 MODEL_PATH = DATA / "model.pkl"
+EVENT_PATH = DATA / "event.json"
 
 TECH_HINTS = (
     "python",
@@ -731,26 +734,54 @@ class Engine:
         items = sorted(resp.data, key=lambda d: getattr(d, "index", 0))
         return [np.array(item.embedding, dtype=np.float32) for item in items]
 
-    def _gemini_coach_moves(self, idea: str) -> list[dict[str, Any]]:
+    def _gemini_coach_moves(
+        self, idea: str, prize_names: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
         if not key:
             raise RuntimeError("GEMINI_API_KEY unset")
         import httpx
 
+        from prizes import prize_prompt_names
+
+        allowed = [n for n in (prize_names or prize_prompt_names()) if n]
+        if allowed:
+            prize_block = (
+                "ALLOWED 2026 SPONSOR TRACKS. You may name a prize only by copying "
+                "one of these strings exactly. Inventing any other prize, track, "
+                "challenge, or award is forbidden:\n"
+                + "\n".join(f"- {n}" for n in allowed)
+            )
+        else:
+            prize_block = (
+                "There is no allowed prize list. Do not name any prize, track, "
+                "challenge, award, or sponsor contest."
+            )
         system = (
             "You coach Hack the North teams. Return STRICT JSON only: "
             '{"moves":[{"label":str,"rationale":str,"reframed_description":str,'
+            '"effort_hours":number,'
             '"features":{"hardware":bool,"has_video":bool,"extra_tech_tags":int}}]}. '
             "Give three or four distinct moves. rationale is one sentence. "
             "reframed_description is the whole idea rewritten as if that move already shipped. "
+            "You only phrase. You do not invent facts or numbers. "
+            "effort_hours is your estimate of how many hours that change takes for a "
+            "four-person hackathon team. Estimate effort ONLY. Do not decide feasibility, "
+            "do not mention remaining time, and do not say too late or enough time. "
             "SYSTEM RULE: NEVER output a probability or percentage. Numbers are forbidden "
-            "in label, rationale, and reframed_description. extra_tech_tags is a small "
-            "integer count of added stack tags in the features object only, never in prose. "
-            "Do not mention scores, odds, percent, or how likely anything is."
+            "in label, rationale, and reframed_description. extra_tech_tags and "
+            "effort_hours live in the JSON fields only, never in prose. "
+            "Do not mention scores, odds, percent, or how likely anything is. "
+            "PRIZE RULE: a move does not need a prize. If you mention one, it MUST be "
+            "copied verbatim from the allowed list. Never invent prize names. "
+            "HISTORY RULE: never say a project won, was awarded, or took a sponsor prize. "
+            "Our data only has finalist status. You may say a neighbour was a finalist "
+            "and nothing stronger. Do not name which prize anyone received."
         )
         user = (
             "Idea:\n"
             f"{idea[:2000]}\n\n"
+            f"{prize_block}\n\n"
             "Propose moves such as: ship a physical build, film a live demo, name a real stack, "
             "or tighten the story toward a judging-day demo. JSON only."
         )
@@ -764,7 +795,7 @@ class Engine:
         }
         # 1.5-flash is retired; this key is a new-user key so 2.5-flash 404s too.
         last_err: Exception | None = None
-        with httpx.Client(timeout=12.0) as client:
+        with httpx.Client(timeout=20.0) as client:
             for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
                 url = (
                     "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -785,10 +816,14 @@ class Engine:
                 last_err = RuntimeError(f"{model} empty")
         raise last_err or RuntimeError("Gemini returned empty")
 
-    def coach(self, idea: str) -> dict[str, Any]:
-        """Propose 3–4 moves. Probabilities come from the classifier, never Gemini."""
+    def coach(self, idea: str, time_budget_hours: float | None = None) -> dict[str, Any]:
+        """Propose 3–4 moves. Probabilities come from the classifier, never Gemini.
+
+        Feasibility is clock math on this process, not a Gemini decision.
+        """
         from github_repo import compose_embed_text
 
+        remaining, budget = _coach_clock(time_budget_hours)
         document = compose_embed_text((idea or "").strip(), None) or (idea or "").strip()
         signals = parse_signals(document, None)
         gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
@@ -800,13 +835,21 @@ class Engine:
             embed_vec = self.vectorizer.transform([document]).toarray()[0]
         baseline_clf, _ = self._probability(embed_vec, signals)
         baseline = self._score_like_ask(embed_vec, signals)
-        out: dict[str, Any] = {"baseline": round(float(baseline), 4), "moves": []}
+        out: dict[str, Any] = {
+            "baseline": round(float(baseline), 4),
+            "moves": [],
+            "hours_remaining": remaining,
+            "time_budget_hours": budget,
+        }
+        from prizes import filter_coach_moves, load_prize_tracks, prize_prompt_names
+
+        tracks = load_prize_tracks()
         try:
-            specs = self._gemini_coach_moves(document)
+            specs = self._gemini_coach_moves(document, prize_names=prize_prompt_names(tracks))
         except Exception as exc:
             print(f"coach gemini skipped ({exc})")
             return out
-        specs = specs[:4]
+        specs = filter_coach_moves(specs, tracks=tracks, projects=self.projects)[:4]
         if not specs:
             return out
         texts = [s["reframed_description"] for s in specs]
@@ -847,6 +890,7 @@ class Engine:
             if xy is None:
                 xy = np.array([0.0, 0.0])
             delta = float(new_prob) - float(baseline)
+            effort = float(spec.get("effort_hours") or 4.0)
             moves.append(
                 {
                     "label": spec["label"],
@@ -854,6 +898,8 @@ class Engine:
                     "new_prob": round(float(new_prob), 4),
                     "delta": round(delta, 4),
                     "new_point": {"x": float(xy[0]), "y": float(xy[1])},
+                    "effort_hours": effort,
+                    "feasible": effort <= budget,
                 }
             )
         moves.sort(key=lambda m: -m["delta"])
@@ -897,6 +943,7 @@ def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
                 "label": label[:80],
                 "rationale": rationale[:240],
                 "reframed_description": reframed[:4000],
+                "effort_hours": _parse_effort_hours(row.get("effort_hours")),
                 "features": {
                     "hardware": bool(feats.get("hardware")),
                     "has_video": bool(feats.get("has_video")),
@@ -904,7 +951,50 @@ def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
                 },
             }
         )
-    return moves[:4]
+    return moves[:8]
+
+
+def hours_until_build_end(
+    now: datetime | None = None, path: Path | None = None
+) -> float:
+    """Hours left until data/event.json build_end. Never negative. File only."""
+    src = path or EVENT_PATH
+    try:
+        raw = json.loads(src.read_text(encoding="utf-8"))
+        end = datetime.fromisoformat(str(raw.get("build_end") or ""))
+        tz_name = str(raw.get("tz") or "").strip()
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=ZoneInfo(tz_name) if tz_name else datetime.now().astimezone().tzinfo)
+    except Exception:
+        return 0.0
+    clock = now if now is not None else datetime.now().astimezone()
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=end.tzinfo)
+    return round(max(0.0, (end - clock).total_seconds() / 3600.0), 2)
+
+
+def _coach_clock(time_budget_hours: float | None) -> tuple[float, float]:
+    remaining = hours_until_build_end()
+    if time_budget_hours is None:
+        return remaining, remaining
+    try:
+        budget = max(0.0, float(time_budget_hours))
+    except (TypeError, ValueError):
+        budget = remaining
+    return remaining, round(budget, 2)
+
+
+def _parse_effort_hours(raw: Any) -> float:
+    if isinstance(raw, bool):
+        return 4.0
+    if isinstance(raw, (int, float)):
+        val = float(raw)
+    else:
+        nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", str(raw or ""))]
+        val = max(nums) if nums else 4.0
+    if val != val or val < 0:
+        return 4.0
+    return round(max(0.25, min(72.0, val)), 2)
 
 
 engine = Engine()

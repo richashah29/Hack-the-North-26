@@ -49,6 +49,7 @@ class AskBody(BaseModel):
 
 class CoachBody(BaseModel):
     text: str = Field(default="", max_length=8000)
+    time_budget_hours: float | None = Field(default=None, ge=0, le=168)
 
 
 @app.on_event("startup")
@@ -135,10 +136,19 @@ def api_coach(body: CoachBody) -> dict:
     if not text:
         raise HTTPException(status_code=400, detail="provide a description")
     try:
-        return engine.coach(text)
+        return engine.coach(text, time_budget_hours=body.time_budget_hours)
     except Exception as exc:
         print(f"coach failed ({exc})")
-        return {"baseline": 0.0, "moves": []}
+        from engine import hours_until_build_end
+
+        remaining = hours_until_build_end()
+        budget = remaining if body.time_budget_hours is None else float(body.time_budget_hours)
+        return {
+            "baseline": 0.0,
+            "moves": [],
+            "hours_remaining": remaining,
+            "time_budget_hours": round(max(0.0, budget), 2),
+        }
 
 
 app.mount("/web", StaticFiles(directory=WEB), name="web")

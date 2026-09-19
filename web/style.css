@@ -309,6 +309,84 @@ body {
 
 .coach-btn:disabled { opacity: 0.45; cursor: wait; }
 
+.coach-time-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.coach-time-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.coach-time {
+  margin: 0 0 12px;
+}
+
+.coach-hours {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.coach-budget-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
+#coach-budget {
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coach-card.is-late {
+  opacity: 0.45;
+}
+
+.coach-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.coach-effort {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.coach-badge {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.coach-badge.is-ok {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .coach-card { cursor: pointer; }
 
 .coach-delta {
