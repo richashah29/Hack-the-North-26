@@ -13,7 +13,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RAW = ROOT / "raw"
 RAW.mkdir(exist_ok=True)
 
-HEAD = {"User-Agent": "HTN2026-student-research/1.0 (sarasdragonz@gmail.com)"}
+HEAD = {
+    "User-Agent": "HTN2026-student-research/1.0 "
+                  "(+https://github.com/richashah29/Hack-the-North-26)"
+}
 
 _client = httpx.Client(headers=HEAD, timeout=25, follow_redirects=True)
 

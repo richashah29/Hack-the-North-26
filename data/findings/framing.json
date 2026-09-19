@@ -1,0 +1,34 @@
+[
+ {
+  "group": "impact framing only",
+  "n": 370,
+  "finalists": 20,
+  "finalist_rate": 0.0541,
+  "ci95_low": 0.0353,
+  "ci95_high": 0.082
+ },
+ {
+  "group": "playful framing only",
+  "n": 624,
+  "finalists": 40,
+  "finalist_rate": 0.0641,
+  "ci95_low": 0.0474,
+  "ci95_high": 0.0861
+ },
+ {
+  "group": "both",
+  "n": 94,
+  "finalists": 5,
+  "finalist_rate": 0.0532,
+  "ci95_low": 0.0229,
+  "ci95_high": 0.1185
+ },
+ {
+  "group": "neither",
+  "n": 2355,
+  "finalists": 96,
+  "finalist_rate": 0.0408,
+  "ci95_low": 0.0335,
+  "ci95_high": 0.0495
+ }
+]

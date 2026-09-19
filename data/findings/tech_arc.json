@@ -1,0 +1,122 @@
+[
+ {
+  "year": 2014,
+  "n_projects": 195,
+  "LLM / genAI": 0.0,
+  "ML / AI (classic)": 0.2359,
+  "Blockchain / crypto": 0.0,
+  "VR / AR": 0.1846,
+  "Mobile": 0.4103,
+  "Cloud / infra": 0.1179
+ },
+ {
+  "year": 2015,
+  "n_projects": 236,
+  "LLM / genAI": 0.0,
+  "ML / AI (classic)": 0.2754,
+  "Blockchain / crypto": 0.0085,
+  "VR / AR": 0.0593,
+  "Mobile": 0.3051,
+  "Cloud / infra": 0.2924
+ },
+ {
+  "year": 2016,
+  "n_projects": 222,
+  "LLM / genAI": 0.0,
+  "ML / AI (classic)": 0.3063,
+  "Blockchain / crypto": 0.009,
+  "VR / AR": 0.0586,
+  "Mobile": 0.2477,
+  "Cloud / infra": 0.3288
+ },
+ {
+  "year": 2017,
+  "n_projects": 217,
+  "LLM / genAI": 0.0,
+  "ML / AI (classic)": 0.3548,
+  "Blockchain / crypto": 0.0691,
+  "VR / AR": 0.0645,
+  "Mobile": 0.2857,
+  "Cloud / infra": 0.3364
+ },
+ {
+  "year": 2018,
+  "n_projects": 245,
+  "LLM / genAI": 0.0,
+  "ML / AI (classic)": 0.3265,
+  "Blockchain / crypto": 0.0286,
+  "VR / AR": 0.0776,
+  "Mobile": 0.2204,
+  "Cloud / infra": 0.4041
+ },
+ {
+  "year": 2019,
+  "n_projects": 319,
+  "LLM / genAI": 0.0063,
+  "ML / AI (classic)": 0.3824,
+  "Blockchain / crypto": 0.0408,
+  "VR / AR": 0.0721,
+  "Mobile": 0.2257,
+  "Cloud / infra": 0.5266
+ },
+ {
+  "year": 2020,
+  "n_projects": 596,
+  "LLM / genAI": 0.0034,
+  "ML / AI (classic)": 0.4245,
+  "Blockchain / crypto": 0.0067,
+  "VR / AR": 0.0218,
+  "Mobile": 0.1678,
+  "Cloud / infra": 0.3121
+ },
+ {
+  "year": 2021,
+  "n_projects": 446,
+  "LLM / genAI": 0.0067,
+  "ML / AI (classic)": 0.3386,
+  "Blockchain / crypto": 0.0224,
+  "VR / AR": 0.0314,
+  "Mobile": 0.1682,
+  "Cloud / infra": 0.2892
+ },
+ {
+  "year": 2022,
+  "n_projects": 222,
+  "LLM / genAI": 0.1892,
+  "ML / AI (classic)": 0.3018,
+  "Blockchain / crypto": 0.036,
+  "VR / AR": 0.0315,
+  "Mobile": 0.1126,
+  "Cloud / infra": 0.1532
+ },
+ {
+  "year": 2023,
+  "n_projects": 250,
+  "LLM / genAI": 0.46,
+  "ML / AI (classic)": 0.352,
+  "Blockchain / crypto": 0.024,
+  "VR / AR": 0.032,
+  "Mobile": 0.1,
+  "Cloud / infra": 0.184
+ },
+ {
+  "year": 2024,
+  "n_projects": 235,
+  "LLM / genAI": 0.5447,
+  "ML / AI (classic)": 0.2468,
+  "Blockchain / crypto": 0.0085,
+  "VR / AR": 0.0426,
+  "Mobile": 0.1191,
+  "Cloud / infra": 0.1532
+ },
+ {
+  "year": 2025,
+  "n_projects": 260,
+  "LLM / genAI": 0.5885,
+  "ML / AI (classic)": 0.2038,
+  "Blockchain / crypto": 0.0154,
+  "VR / AR": 0.0462,
+  "Mobile": 0.0577,
+  "Cloud / infra": 0.1615
+ }
+]
