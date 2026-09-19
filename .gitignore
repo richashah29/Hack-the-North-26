@@ -1,0 +1,8 @@
+# Cached HTML from the crawl - thousands of files, regenerable via src/scrape.py
+raw/
+data/phase_*.log
+
+__pycache__/
+*.pyc
+.DS_Store
+.env
