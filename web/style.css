@@ -177,8 +177,7 @@ body {
 }
 
 .neighbours,
-.tracks,
-.coach {
+.tracks {
   flex: 0 0 auto;
 }
 
@@ -201,14 +200,27 @@ body {
 }
 
 #neighbour-list,
-#track-list,
-#coach-list {
+#track-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+#coach-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 140px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .card {
@@ -230,9 +242,17 @@ body {
   font-size: 16px;
   font-weight: 600;
   overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
 }
-.card-year { color: var(--muted); font-size: 13px; }
-.card-tag { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.35; }
+.card-tag {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 .badge {
   display: inline-block;
@@ -282,17 +302,31 @@ body {
 }
 
 .coach {
-  flex: 0 1 auto;
+  flex: 1 1 52%;
   min-height: 0;
-  max-height: 42vh;
-  overflow-x: hidden;
-  overflow-y: auto;
+  max-height: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid var(--line);
   padding: 12px 20px 8px;
   background: var(--panel);
 }
 
-.coach-btn {
+.rail.has-coach .rail-scroll {
+  flex: 1 1 36%;
+}
+
+.rail.has-coach .prob-num {
+  font-size: 36px;
+}
+
+.coach h2,
+.coach-time-toggle,
+.coach-time,
+.coach > .empty {
+  flex: 0 0 auto;
+}
   margin: 0 0 10px;
   width: 100%;
   background: transparent;
@@ -325,11 +359,16 @@ body {
 }
 
 .coach-time {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
+  display: grid;
+  grid-template-columns: 1fr 88px;
+  gap: 6px 10px;
+  align-items: end;
 }
 
 .coach-hours {
-  margin: 0 0 8px;
+  grid-column: 1 / -1;
+  margin: 0;
   font-size: 13px;
   color: var(--muted);
 }
@@ -391,7 +430,7 @@ body {
 
 .coach-delta {
   color: var(--accent);
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html as html_lib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,13 @@ from schema import ROOT
 
 CACHE = ROOT / "data" / "tracks_cache.json"
 PRIZES_PATH = ROOT / "data" / "prizes.json"
+
+
+def prizes_file() -> Path:
+    raw = (os.getenv("PRIZES_PATH") or "").strip()
+    return Path(raw).expanduser() if raw else PRIZES_PATH
+
+
 HEAD = {"User-Agent": "PriorArt-HTN2026"}
 YEAR_HOST = re.compile(r"hackthenorth(\d{4})?\.devpost\.com", re.I)
 STOP = set(ENGLISH_STOP_WORDS) | {
@@ -333,7 +341,7 @@ def _norm_prize(s: str) -> str:
 
 def load_prize_tracks(path: Path | None = None) -> list[dict[str, str]]:
     """HTN 2026 sponsor tracks. Coach may name only these."""
-    src = path or PRIZES_PATH
+    src = path or prizes_file()
     if not src.exists():
         return []
     try:

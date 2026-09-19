@@ -213,11 +213,19 @@ def load_corpus(path: str | Path | None = None) -> list[Project]:
     if parquet.exists():
         import pandas as pd
 
-        df = pd.read_parquet(parquet)
+        try:
+            df = pd.read_parquet(parquet)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read corpus at {parquet}: {exc}") from exc
         rows = df.to_dict(orient="records")
         projects = [project_from_row(r) for r in rows if r.get("slug")]
-        if projects:
-            return projects
+        if not projects:
+            raise RuntimeError(f"Corpus at {parquet} has no rows with slugs.")
+        return projects
+    env = (os.environ.get("CORPUS_PATH") or "").strip()
+    if env:
+        raise RuntimeError(f"CORPUS_PATH is {parquet} but that file is missing.")
+    print(f"corpus parquet missing at {parquet} — falling back to sample.json")
     for candidate in (_APP_SAMPLE, ROOT / SAMPLE_PATH):
         if candidate.exists():
             raw = json.loads(candidate.read_text(encoding="utf-8"))

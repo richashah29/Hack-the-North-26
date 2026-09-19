@@ -32,6 +32,8 @@
   const budgetInput = document.getElementById("coach-budget");
   let lastCoach = null;
   let budgetTouched = false;
+  let askInFlight = false;
+  let coachInFlight = false;
 
   const ACCENT = "#e8a317";
   const MUTE = "#3c3c42";
@@ -212,7 +214,7 @@
 
   function renderNeighbours(items) {
     neighbourList.innerHTML = "";
-    if (!items.length) {
+    if (!items || !items.length) {
       neighboursEmpty.hidden = false;
       return;
     }
@@ -220,12 +222,15 @@
     for (const n of items) {
       const li = document.createElement("li");
       li.className = "card" + (n.finalist ? " is-hit" : "");
+      const title = n && n.title != null ? String(n.title) : "";
+      const tagline = n && n.tagline != null ? String(n.tagline) : "";
+      const year = n && n.year != null && n.year !== "" ? String(n.year) : "";
       li.innerHTML = `
         <div class="card-top">
-          <span class="card-title">${escapeHtml(n.title)}</span>
-          <span class="card-year">${n.year}</span>
+          <span class="card-title">${escapeHtml(title)}</span>
+          <span class="card-year">${escapeHtml(year)}</span>
         </div>
-        <p class="card-tag">${escapeHtml(n.tagline || "")}</p>
+        <p class="card-tag">${escapeHtml(tagline)}</p>
         ${n.finalist ? '<div class="badge">Finalist</div>' : ""}
       `;
       neighbourList.appendChild(li);
@@ -253,6 +258,22 @@
 
   function timeAwareOn() {
     return !!(timeToggle && timeToggle.checked);
+  }
+
+  function formatDelta(delta) {
+    const pct = (Number(delta) || 0) * 100;
+    const tenths = Math.round(pct * 10) / 10;
+    const abs = Math.abs(tenths);
+    const body = Number.isInteger(abs) ? String(abs) : abs.toFixed(1);
+    if (tenths > 0) return `+${body}%`;
+    if (tenths < 0) return `-${body}%`;
+    return "0%";
+  }
+
+  function setCoachOpen(open) {
+    const rail = document.querySelector(".rail");
+    if (coachPanel) coachPanel.hidden = !open;
+    if (rail) rail.classList.toggle("has-coach", !!open);
   }
 
   function formatHoursLeft(hours) {
@@ -311,8 +332,8 @@
       const effort = Number(move.effort_hours);
       const feasible = aware ? effort <= budget : true;
       li.className = `card coach-card${aware && !feasible ? " is-late" : ""}`;
-      const pct = Math.round((move.delta || 0) * 100);
-      const signed = `${pct > 0 ? "+" : ""}${pct}%`;
+      const pct = (Number(move.delta) || 0) * 100;
+      const signed = formatDelta(move.delta);
       let extra = "";
       if (aware) {
         extra = `<div class="coach-meta">
@@ -350,9 +371,10 @@
   if (coachBtn) {
     coachBtn.addEventListener("click", async () => {
       const text = lastIdeaText || (input && input.value.trim()) || "";
-      if (!text) return;
+      if (!text || coachInFlight) return;
+      coachInFlight = true;
       coachBtn.disabled = true;
-      if (coachPanel) coachPanel.hidden = false;
+      setCoachOpen(true);
       syncTimeUi(lastCoach);
       if (coachStatus) {
         coachStatus.hidden = false;
@@ -379,6 +401,7 @@
         }
         console.error(err);
       } finally {
+        coachInFlight = false;
         coachBtn.disabled = false;
       }
     });
@@ -458,12 +481,19 @@
 
   function renderProb(data) {
     probPanel.hidden = false;
-    const pct = Math.round((data.probability || 0) * 100);
-    probNum.textContent = `${pct}%`;
-    const m = data.model || {};
-    const auc = m.auc == null ? "—" : Number(m.auc).toFixed(2);
+    const p = Number(data && data.probability);
+    if (!Number.isFinite(p)) {
+      probNum.textContent = "—";
+    } else {
+      const pct = Math.round(Math.max(0, Math.min(1, p)) * 100);
+      probNum.textContent = `${pct}%`;
+    }
+    const m = (data && data.model) || {};
+    const aucNum = m.auc == null ? NaN : Number(m.auc);
+    const auc = Number.isFinite(aucNum) ? aucNum.toFixed(2) : "—";
     const n = m.n_train ?? "—";
     const spread = Array.isArray(m.auc_spread) && m.auc_spread.length === 2
+      && Number.isFinite(Number(m.auc_spread[0])) && Number.isFinite(Number(m.auc_spread[1]))
       ? ` (${Number(m.auc_spread[0]).toFixed(2)}–${Number(m.auc_spread[1]).toFixed(2)})`
       : "";
     let line = `Calibrated from corpus signals, not neighbour similarity.\nAUC ${auc}${spread}  ·  ${n} training projects  ·  leave-one-year-out`;
@@ -490,6 +520,7 @@
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    if (askInFlight) return;
     const text = input.value.trim();
     const github = (githubInput && githubInput.value.trim()) || "";
     const devpost = (devpostInput && devpostInput.value.trim()) || "";
@@ -500,6 +531,7 @@
       }
       return;
     }
+    askInFlight = true;
     askBtn.disabled = true;
     if (askStatus) {
       askStatus.hidden = false;
@@ -529,7 +561,7 @@
       renderTracks(data.tracks);
       renderProb(data);
       if (coachPanel) {
-        coachPanel.hidden = true;
+        setCoachOpen(false);
         lastCoach = null;
         if (coachList) coachList.innerHTML = "";
         if (coachStatus) coachStatus.hidden = true;
@@ -562,7 +594,8 @@
       neighboursEmpty.textContent = "Could not place that idea. Try again.";
       if (askStatus) askStatus.hidden = true;
       console.error(err);
-    } finally {
+      } finally {
+      askInFlight = false;
       askBtn.disabled = false;
     }
   });
@@ -674,50 +707,63 @@
   }
 
   async function loadFindings() {
-    const res = await fetch("/api/findings");
-    const data = await res.json();
-    if (data.source === "sample") {
-      findingsNote.textContent = "Sample claims until Richa ships data/findings.json.";
-    } else {
-      findingsNote.textContent = "";
+    try {
+      const res = await fetch("/api/findings");
+      const data = await res.json();
+      if (data.source === "sample") {
+        findingsNote.textContent = "Sample claims until Richa ships data/findings.json.";
+      } else {
+        findingsNote.textContent = "";
+      }
+      chartsEl.innerHTML = "";
+      for (const chart of data.charts || []) {
+        appendChart(chart);
+      }
+      const aiChart = data.ai_writing ? chartFromAiWriting(data.ai_writing) : null;
+      if (aiChart) appendChart(aiChart);
+    } catch (err) {
+      if (findingsNote) findingsNote.textContent = "Findings did not load.";
+      console.error(err);
     }
-    chartsEl.innerHTML = "";
-    for (const chart of data.charts || []) {
-      appendChart(chart);
-    }
-    const aiChart = data.ai_writing ? chartFromAiWriting(data.ai_writing) : null;
-    if (aiChart) appendChart(aiChart);
   }
 
   async function boot() {
-    const [mapRes, cfgRes] = await Promise.all([fetch("/api/map"), fetch("/api/config")]);
-    mapData = await mapRes.json();
-    const cfg = await cfgRes.json();
-    corpusMeta.textContent = `${cfg.n} projects  ·  ${cfg.n_finalists} finalists  ·  ${cfg.source}`;
-    console.log("map", mapData);
-    if (cfg.sentry_dsn) {
-      const key = cfg.sentry_dsn.split("://")[1]?.split("@")[0];
-      const s = document.createElement("script");
-      s.src = `https://js.sentry-cdn.com/${key}.min.js`;
-      s.crossOrigin = "anonymous";
-      const init = () => {
-        if (!window.Sentry) return;
-        window.Sentry.init({
-          dsn: cfg.sentry_dsn,
-          tracesSampleRate: 1.0,
-          replaysSessionSampleRate: 1.0,
-          replaysOnErrorSampleRate: 1.0,
-          integrations: [
-            window.Sentry.browserTracingIntegration && window.Sentry.browserTracingIntegration(),
-            window.Sentry.replayIntegration && window.Sentry.replayIntegration(),
-          ].filter(Boolean),
-        });
-      };
-      s.onload = () => {
-        if (window.Sentry && window.Sentry.onLoad) window.Sentry.onLoad(init);
-        else init();
-      };
-      document.head.appendChild(s);
+    try {
+      const [mapRes, cfgRes] = await Promise.all([fetch("/api/map"), fetch("/api/config")]);
+      mapData = await mapRes.json();
+      if (!mapData || !Array.isArray(mapData.points)) {
+        mapData = { points: [], bounds: { x0: -1, y0: -1, x1: 1, y1: 1 } };
+      }
+      const cfg = await cfgRes.json();
+      corpusMeta.textContent = `${cfg.n} projects  ·  ${cfg.n_finalists} finalists  ·  ${cfg.source}`;
+      console.log("map", mapData);
+      if (cfg.sentry_dsn) {
+        const key = cfg.sentry_dsn.split("://")[1]?.split("@")[0];
+        const s = document.createElement("script");
+        s.src = `https://js.sentry-cdn.com/${key}.min.js`;
+        s.crossOrigin = "anonymous";
+        const init = () => {
+          if (!window.Sentry) return;
+          window.Sentry.init({
+            dsn: cfg.sentry_dsn,
+            tracesSampleRate: 1.0,
+            replaysSessionSampleRate: 1.0,
+            replaysOnErrorSampleRate: 1.0,
+            integrations: [
+              window.Sentry.browserTracingIntegration && window.Sentry.browserTracingIntegration(),
+              window.Sentry.replayIntegration && window.Sentry.replayIntegration(),
+            ].filter(Boolean),
+          });
+        };
+        s.onload = () => {
+          if (window.Sentry && window.Sentry.onLoad) window.Sentry.onLoad(init);
+          else init();
+        };
+        document.head.appendChild(s);
+      }
+    } catch (err) {
+      corpusMeta.textContent = "Could not load the map.";
+      console.error(err);
     }
     resize();
     loadFindings();
