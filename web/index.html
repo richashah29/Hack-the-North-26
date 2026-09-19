@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prior Art</title>
+  <link rel="stylesheet" href="/web/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="brand-name">Prior Art</div>
+      <div class="brand-sub" id="corpus-meta">Hack the North, 2014–2025</div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab is-on" data-view="explore" type="button">Explore</button>
+      <button class="tab" data-view="findings" type="button">Findings</button>
+    </nav>
+  </header>
+
+  <main id="view-explore" class="view explore">
+    <aside class="rail">
+      <form id="ask-form" class="ask">
+        <label for="ask-input">Describe your project.</label>
+        <textarea id="ask-input" name="text" rows="3" maxlength="4000" placeholder="A cane that maps icy sidewalks and speaks them before you reach them." required></textarea>
+        <button type="submit" id="ask-btn">Place it</button>
+      </form>
+
+      <section class="neighbours" id="neighbours">
+        <h2>Nearest neighbours</h2>
+        <p class="empty" id="neighbours-empty">Twelve years of submissions. Type an idea to see what it sits next to.</p>
+        <ol id="neighbour-list"></ol>
+      </section>
+
+      <section class="prob" id="prob-panel" hidden>
+        <div class="prob-num" id="prob-num">—</div>
+        <div class="prob-label">finalist probability</div>
+        <div class="prob-meta" id="prob-meta"></div>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <canvas id="map"></canvas>
+      <div class="legend">
+        <span><i class="swatch mute"></i> submission</span>
+        <span><i class="swatch accent"></i> finalist</span>
+        <span><i class="swatch you"></i> you</span>
+      </div>
+      <div id="tooltip" class="tooltip" hidden></div>
+    </section>
+  </main>
+
+  <main id="view-findings" class="view findings" hidden>
+    <p class="findings-note" id="findings-note"></p>
+    <div id="charts" class="charts"></div>
+  </main>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>

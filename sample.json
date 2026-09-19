@@ -1,0 +1,342 @@
+[
+  {
+    "slug": "pathsense-athy2r",
+    "year": 2024,
+    "title": "PathSense",
+    "tagline": "A cane that speaks the sidewalk.",
+    "description": "PathSense is a white-cane attachment that maps curb cuts, construction, and icy patches in real time and speaks them before you reach them. We fused a cheap lidar module with on-device computer vision so the device works without a phone signal. The app is optional: the cane vibrates a pattern you can learn in five minutes. We walked Waterloo campus with three blind testers and they found two unmarked construction zones our campus maps missed. Built overnight after one of us watched a friend miss a curb in the dark.",
+    "sections": {
+      "inspiration": "A teammate's friend uses a cane and still walks into unmarked construction. Campus maps lie.",
+      "challenges": "Lidar noise in snow. Making haptic patterns distinguishable with gloves on."
+    },
+    "built_with": ["Python", "OpenCV", "Raspberry Pi", "Arduino", "C++"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": ["Finalist", "Best Hardware"],
+    "finalist": true
+  },
+  {
+    "slug": "pulsegrip-k8n1qw",
+    "year": 2023,
+    "title": "PulseGrip",
+    "tagline": "A climbing hold that knows when you are about to fall.",
+    "description": "PulseGrip is a smart climbing hold that measures grip force and heart-rate variability through the palm and warns a belayer before a climber pumps out. We milled a hold, embedded force-sensitive resistors, and streamed to a watch on the belayer's wrist. The model is a tiny random forest trained on twenty of our own falls. It is a toy with a serious use: gyms lose people to overconfidence on the first lead. We demoed it on a portable hangboard and made a judge clip in.",
+    "sections": {
+      "inspiration": "Indoor gyms treat falling as inevitable. We wanted a hold that argued back.",
+      "challenges": "Sweat wrecks electrodes. Force sensors drift after fifty pulls."
+    },
+    "built_with": ["Arduino", "C++", "Python", "scikit-learn", "BLE"],
+    "team_size": 3,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": ["Finalist"],
+    "finalist": true
+  },
+  {
+    "slug": "chessmate-nwygvq",
+    "year": 2019,
+    "title": "ChessMate",
+    "tagline": "A robot arm that plays chess against you on a real board.",
+    "description": "ChessMate is a desk-sized robot arm that sees a physical chessboard, moves pieces, and trash-talks in a calm voice. Computer vision finds the squares; a stockfish wrapper chooses the move; three servos execute it without knocking over the king. We spent six hours just teaching it not to drag a rook through a pawn. The joy is analog: no app, no account, a wooden board and a slightly rude machine.",
+    "sections": {
+      "inspiration": "We missed playing on a real board and nobody in the room was any good.",
+      "challenges": "Calibration. Lighting. The bishop kept getting stuck on felt."
+    },
+    "built_with": ["Python", "OpenCV", "Arduino", "Stockfish", "Raspberry Pi"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": ["Finalist", "Funniest Hack"],
+    "finalist": true
+  },
+  {
+    "slug": "dejavu-m2l9px",
+    "year": 2021,
+    "title": "DejaVu",
+    "tagline": "A wearable that reminds you of names three seconds before you need them.",
+    "description": "DejaVu is a lapel camera plus an earpiece that whispers a person's name when they walk toward you. Face embeddings live on-device; the match is a nearest-neighbour lookup against people you have already met at the hackathon. We never upload faces. The demo is cruel and useful: walk up to a sponsor you met at 11am and do not blank. Built for the socially anxious, which was all of us.",
+    "sections": {
+      "inspiration": "Name anxiety at events is a tax on people who already used their social battery to show up.",
+      "challenges": "On-device embeddings, bad hallway lighting, and the ethics of a face camera. We made delete-on-device the default."
+    },
+    "built_with": ["PyTorch", "Python", "Raspberry Pi", "BLE", "Swift"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": ["Finalist"],
+    "finalist": true
+  },
+  {
+    "slug": "northstar-q7v3kd",
+    "year": 2025,
+    "title": "NorthStar",
+    "tagline": "A local LLM that answers only from the pages you photographed.",
+    "description": "NorthStar is a retrieval toy for people who do not want their notes in the cloud. Photograph a stack of lecture slides or a paper; we OCR, chunk, embed locally, and answer questions from those pages only. If the answer is not in the photos, it says so. We ran a 3B model on a laptop and a better one when a GPU appeared. The point is provenance: every sentence cites a crop of an image you took two minutes ago.",
+    "sections": {
+      "inspiration": "Study tools that send your notes to a vendor. We wanted the opposite.",
+      "challenges": "OCR on whiteboard photos. Keeping the model from hallucinating a third page."
+    },
+    "built_with": ["Python", "llama.cpp", "Tesseract", "FastAPI", "SQLite"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": ["Finalist"],
+    "finalist": true
+  },
+  {
+    "slug": "eyeread-b4c8wn",
+    "year": 2022,
+    "title": "EyeRead",
+    "tagline": "Phone camera reads paper menus out loud, in the language you want.",
+    "description": "EyeRead points a phone at a printed menu or a bus schedule and reads it aloud. We used on-device OCR and a small translation model so it works in a basement with no signal. Built for a teammate's grandmother and for anyone staring at a chalkboard specials list. Not a new idea; a reliable one, with big type and a single button.",
+    "sections": {
+      "inspiration": "A family dinner where half the table could not read the specials board.",
+      "challenges": "Fancy restaurant fonts. Steam on the lens."
+    },
+    "built_with": ["Swift", "Vision", "Python", "Tesseract"],
+    "team_size": 3,
+    "has_video": false,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "heartlink-f1r6ja",
+    "year": 2020,
+    "title": "HeartLink",
+    "tagline": "A cheap pulse oximeter that texts your roommate when your oxygen dips.",
+    "description": "HeartLink is a MAX30102 on a watch strap, a microcontroller, and a single SMS. We built it in the first winter of remote school for people living alone who wanted a quiet check, not a hospital dashboard. The hardware is ugly. The message is one line. We argued for two hours about whether a graph belonged on the phone and decided it did not.",
+    "sections": {
+      "inspiration": "Living alone and wanting one person to know if something is wrong, without an app account.",
+      "challenges": "Sensor noise when you walk. SMS costs. Not pretending to be a medical device."
+    },
+    "built_with": ["Arduino", "C++", "Twilio", "Python"],
+    "team_size": 2,
+    "has_video": false,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "medtrack-p9d2ls",
+    "year": 2018,
+    "title": "MedTrack",
+    "tagline": "A pill-bottle cap that tweets at you when you skip a dose.",
+    "description": "MedTrack is a 3D-printed cap with a reed switch. Open the bottle, we log it. Miss a window, we text. We tried to make adherence feel like a game and then deleted the points system because it felt cruel. What remains is a cap, a clock, and a stubborn reminder. Demoed with tic tacs.",
+    "sections": {
+      "inspiration": "A parent who organises pills by the kitchen sink and still misses Wednesday.",
+      "challenges": "Battery life. False opens. Not shaming the user."
+    },
+    "built_with": ["Arduino", "Python", "Twilio", "Fusion 360"],
+    "team_size": 3,
+    "has_video": true,
+    "has_repo": false,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "recess-h3k7vt",
+    "year": 2017,
+    "title": "Recess",
+    "tagline": "A playground that generates a new rule every time you tag someone.",
+    "description": "Recess is a wristband game for a gym. Tag someone and the server invents a new constraint: freeze on red, only hop, swap teams. We wanted something that made adults look ridiculous in public and did. The radio protocol ate an hour. The rules engine is a pile of cards in JSON. Judges played it in the hallway and a stranger joined.",
+    "sections": {
+      "inspiration": "House rules that appear mid-game when you were a kid.",
+      "challenges": "Latency. Cheating. Explaining the current rule without a screen."
+    },
+    "built_with": ["JavaScript", "Node.js", "Arduino", "WebSockets"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "partykit-s5m8qc",
+    "year": 2016,
+    "title": "PartyKit",
+    "tagline": "Turn any living room into a local multiplayer cabinet.",
+    "description": "PartyKit is a projector game you control with phones as paddles. No accounts, a local Wi-Fi network, four players, one ball, too much shouting. We built two games and a physics bug we decided was a feature. It is the opposite of a social network: when the router goes, the night is over.",
+    "sections": {
+      "inspiration": "Wii Sports without the Wii, and without asking Nintendo.",
+      "challenges": "Phone gyro drift. People leaving the Wi-Fi for Instagram."
+    },
+    "built_with": ["JavaScript", "WebSockets", "HTML5 Canvas", "Node.js"],
+    "team_size": 3,
+    "has_video": false,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "promptpilot-w6n4eb",
+    "year": 2023,
+    "title": "PromptPilot",
+    "tagline": "A debugger for prompts that shows which sentence changed the answer.",
+    "description": "PromptPilot diffs prompt variants and highlights the clause that flipped the model's answer. We wrapped a cheap chat model, stored traces, and built a two-pane editor. It is a developer tool pretending to be a science experiment. Useful for the hour when your prompt is a haunted house and you cannot tell which door you opened.",
+    "sections": {
+      "inspiration": "Watching a teammate paste the same prompt with one adjective changed and get a different API.",
+      "challenges": "Non-determinism. Cost. Pretending we understood attention."
+    },
+    "built_with": ["Python", "OpenAI", "React", "FastAPI"],
+    "team_size": 2,
+    "has_video": false,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "spyder-t2j9ra",
+    "year": 2015,
+    "title": "Spyder",
+    "tagline": "A four-leg robot that climbs the nearest chair and then falls off it.",
+    "description": "Spyder is a cardboard-and-servo quadruped that mostly fails, on purpose. Inverse kinematics on a napkin. We chased a gait that looked like a spider and got a gait that looked like a folding table. The video of it falling is better than the video of it walking. Hardware humour, 2015 edition.",
+    "sections": {
+      "inspiration": "Boston Dynamics, if Boston Dynamics shopped at a dollar store.",
+      "challenges": "Torque. Cardboard. Gravity, which we filed as a bug."
+    },
+    "built_with": ["Arduino", "C++", "Python", "Servo"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": false,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "griplock-c8p3yd",
+    "year": 2014,
+    "title": "GripLock",
+    "tagline": "A bike lock that opens only if the handshake matches yours.",
+    "description": "GripLock is a U-lock with a force-profile sensor in the handle. Squeeze it the way you always squeeze it and it unlocks. Someone else grabbing it gets a buzz and no click. We sampled twenty grips and overfit immediately. The demo still worked on the builder's hand and nobody else's, which we called security.",
+    "sections": {
+      "inspiration": "Lost keys, and a dislike of apps that unlock bikes over Bluetooth in a crowd.",
+      "challenges": "Cold hands. Gloves. A servo that ate the battery by Saturday morning."
+    },
+    "built_with": ["Arduino", "C", "Force sensors"],
+    "team_size": 2,
+    "has_video": false,
+    "has_repo": false,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "tableforfour-v1h6mk",
+    "year": 2018,
+    "title": "TableForFour",
+    "tagline": "Sit with three strangers who picked the same weird lunch constraint.",
+    "description": "TableForFour matches four people at a conference who all checked the same odd box: no small talk about work, or only questions, or eat in silence. We printed table tents and ran it at lunch. The software is a form and a greedy matcher. The product is the rule on the card. Two tables worked, one table fled.",
+    "sections": {
+      "inspiration": "Conference lunches where everyone performs their internship.",
+      "challenges": "No-shows. People who want the bit and then do not do the bit."
+    },
+    "built_with": ["Ruby", "Rails", "PostgreSQL", "HTML"],
+    "team_size": 3,
+    "has_video": false,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "dormdash-n5q8zf",
+    "year": 2016,
+    "title": "DormDash",
+    "tagline": "A hallway marketplace for the leftover meal-plan burrito.",
+    "description": "DormDash lets you list extra cafeteria food for anyone on your floor in the next twenty minutes. No money, just a clock and a room number. We built it after watching a dining hall throw out trays at 8. It is Craigslist for a residence with a conscience and a TTL. The legal page is a joke we should have taken more seriously.",
+    "sections": {
+      "inspiration": "Meal plans and waste, which are the same problem.",
+      "challenges": "Trust. Allergies. People listing things they had already eaten."
+    },
+    "built_with": ["JavaScript", "Firebase", "HTML", "CSS"],
+    "team_size": 2,
+    "has_video": false,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "carbonsense-a7e2ux",
+    "year": 2022,
+    "title": "CarbonSense",
+    "tagline": "A browser extension that prices your cart in kilograms, not dollars.",
+    "description": "CarbonSense estimates the carbon of a checkout page from product titles and a shabby lookup table. It is not accurate. We said so on the first screen. The point was to make a number appear next to 'place order' and see if anyone flinched. We flinched. Judges asked for methodology and we showed a spreadsheet.",
+    "sections": {
+      "inspiration": "Receipts that hide the other cost.",
+      "challenges": "Data. Almost no public SKU-to-carbon map. We guessed, then labeled the guesses."
+    },
+    "built_with": ["JavaScript", "Chrome Extension", "Python"],
+    "team_size": 3,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "wastenot-d4b9ig",
+    "year": 2024,
+    "title": "WasteNot",
+    "tagline": "Photograph your fridge; get a recipe that uses the thing that dies tomorrow.",
+    "description": "WasteNot is a camera-to-recipe tool. Snap a shelf, we detect produce, we pick the item closest to spoiling from a dating heuristic, and we write a recipe around it. Vision model off the shelf, recipes from a public dump, spoilage table from a government PDF. It is a compost-bin avoider, not a chef. We cooked the demo with sad grapes and a surprising pasta.",
+    "sections": {
+      "inspiration": "The drawer of herbs that become slime.",
+      "challenges": "Recognising cilantro versus parsley. People who photograph a closed fridge."
+    },
+    "built_with": ["Python", "OpenCV", "OpenAI", "Flask"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "blocksplit-j8s1lo",
+    "year": 2018,
+    "title": "BlockSplit",
+    "tagline": "Split a dinner bill on a chain nobody asked for.",
+    "description": "BlockSplit puts a restaurant tab on a private Ethereum testnet and calls it fairness. We had a QR code, a smart contract, and a gas story we could not defend. Built because the track existed. The honest version is Venmo. We shipped the dishonest version with a nice diagram of a merkle tree, which we also did not need.",
+    "sections": {
+      "inspiration": "The 2018 sponsor board.",
+      "challenges": "Wallets. Onboarding. Shame."
+    },
+    "built_with": ["Solidity", "Web3.js", "JavaScript", "Ethereum"],
+    "team_size": 4,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": ["Blockchain Track"],
+    "finalist": false
+  },
+  {
+    "slug": "tipjar-k3u6we",
+    "year": 2017,
+    "title": "TipJar",
+    "tagline": "A NFC card that tips street musicians without an app install.",
+    "description": "TipJar is a card you tap on a musician's phone to send two dollars. We used NFC and a pre-funded pot so the musician does not wait on a bank. The product is a physical object and a spreadsheet. We stood in a market for an hour and collected four taps and one confused dog.",
+    "sections": {
+      "inspiration": "Empty guitar cases and phones that will not unlock in the cold.",
+      "challenges": "NFC support. Float. Explaining it without saying crypto, then saying crypto anyway."
+    },
+    "built_with": ["Android", "Java", "NFC", "Stripe"],
+    "team_size": 2,
+    "has_video": false,
+    "has_repo": false,
+    "prizes": [],
+    "finalist": false
+  },
+  {
+    "slug": "amproom-r9f5hc",
+    "year": 2015,
+    "title": "AmpRoom",
+    "tagline": "Jam with a stranger in another city at a latency you can almost ignore.",
+    "description": "AmpRoom is a two-person audio pipe with a metronome that lies a little so the playing feels tight. We compressed guitar into a mean codec and displayed the other person's room as a cheap webcam square. It is not Zoom. It is worse and more specific. When it worked, two riffs landed on the same downbeat and we yelled.",
+    "sections": {
+      "inspiration": "Bandmates who moved, and the dead air of a phone call.",
+      "challenges": "Jitter. Clock drift. Everyone owning a different audio interface."
+    },
+    "built_with": ["C++", "WebRTC", "JavaScript", "Python"],
+    "team_size": 3,
+    "has_video": true,
+    "has_repo": true,
+    "prizes": [],
+    "finalist": false
+  }
+]

@@ -1,0 +1,80 @@
+{
+  "source": "sample",
+  "note": "Placeholder numbers so the Findings view renders before Richa ships the real file. Replace this file; keep the shape.",
+  "charts": [
+    {
+      "id": "video",
+      "claim": "Demo videos barely move the needle",
+      "kind": "bars",
+      "unit": "finalist rate",
+      "bars": [
+        {"label": "Has video", "value": 0.09, "n": 412},
+        {"label": "No video", "value": 0.08, "n": 1588}
+      ]
+    },
+    {
+      "id": "team",
+      "claim": "Teams of four show up as finalists more than solo builders",
+      "kind": "bars",
+      "unit": "finalist rate",
+      "bars": [
+        {"label": "1", "value": 0.03, "n": 210},
+        {"label": "2", "value": 0.06, "n": 540},
+        {"label": "3", "value": 0.08, "n": 620},
+        {"label": "4+", "value": 0.12, "n": 630}
+      ]
+    },
+    {
+      "id": "tech",
+      "claim": "The stack follows the zeitgeist, not the other way around",
+      "kind": "lines",
+      "unit": "share of projects",
+      "series": [
+        {
+          "label": "Hardware",
+          "points": [
+            {"year": 2014, "value": 0.22},
+            {"year": 2016, "value": 0.24},
+            {"year": 2018, "value": 0.18},
+            {"year": 2020, "value": 0.12},
+            {"year": 2022, "value": 0.14},
+            {"year": 2024, "value": 0.16}
+          ]
+        },
+        {
+          "label": "Blockchain",
+          "points": [
+            {"year": 2014, "value": 0.00},
+            {"year": 2016, "value": 0.01},
+            {"year": 2018, "value": 0.18},
+            {"year": 2020, "value": 0.11},
+            {"year": 2022, "value": 0.04},
+            {"year": 2024, "value": 0.02}
+          ]
+        },
+        {
+          "label": "LLM / AI",
+          "points": [
+            {"year": 2014, "value": 0.03},
+            {"year": 2016, "value": 0.04},
+            {"year": 2018, "value": 0.05},
+            {"year": 2020, "value": 0.07},
+            {"year": 2022, "value": 0.09},
+            {"year": 2024, "value": 0.31}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "framing",
+      "claim": "Impact language does not beat playful framing",
+      "kind": "bars",
+      "unit": "finalist rate",
+      "bars": [
+        {"label": "Impact framed", "value": 0.07, "n": 880},
+        {"label": "Playful framed", "value": 0.10, "n": 640},
+        {"label": "Unclassified", "value": 0.08, "n": 480}
+      ]
+    }
+  ]
+}

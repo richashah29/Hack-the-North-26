@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+raw/
+data/emb_cache.json
+data/*.npy
+data/model.pkl
+*.egg-info/
+.sentry-native/
