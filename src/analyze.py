@@ -27,8 +27,8 @@ CATEGORIES = {
     "Cloud / infra": r"aws|azure|gcp|google-cloud|docker|kubernetes|firebase|heroku|vercel",
 }
 
-IMPACT = r"\b(accessib|healthcare|patients?|disabilit|climate|sustainab|poverty|equity|underserved|crisis|mental health|diagnos|safety|refugee|inequal|social good|nonprofit|carbon|emission)"
-PLAYFUL = r"\b(fun|game|silly|meme|joke|playful|ridiculous|absurd|chaos|shenanigan|for the lols|troll|goofy|useless|cursed|hackathon vibes)"
+IMPACT = r"\b(?:accessib|healthcare|patients?|disabilit|climate|sustainab|poverty|equity|underserved|crisis|mental health|diagnos|safety|refugee|inequal|social good|nonprofit|carbon|emission)"
+PLAYFUL = r"\b(?:fun|game|silly|meme|joke|playful|ridiculous|absurd|chaos|shenanigan|for the lols|troll|goofy|useless|cursed|hackathon vibes)"
 
 
 def cohens_d(a, b):

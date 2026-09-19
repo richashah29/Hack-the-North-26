@@ -66,23 +66,28 @@ body {
 .tab.is-on { color: var(--text); background: #1a1a1d; }
 
 .view { flex: 1; min-height: 0; }
-.view[hidden] { display: none !important; }
+[hidden] { display: none !important; }
 
 .explore {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .rail {
   border-right: 1px solid var(--line);
-  padding: 20px 20px 16px;
+  padding: 0;
   overflow: hidden;
   background: var(--panel);
   display: flex;
   flex-direction: column;
-  gap: 18px;
   min-height: 0;
+  min-width: 0;
+}
+
+.ask {
+  flex: 0 0 auto;
 }
 
 .ask label {
@@ -93,9 +98,11 @@ body {
 }
 
 .ask textarea {
+  display: block;
   width: 100%;
   resize: vertical;
-  min-height: 92px;
+  min-height: 72px;
+  max-height: 160px;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--line);
@@ -105,9 +112,39 @@ body {
   line-height: 1.4;
 }
 
-.ask textarea:focus {
+.ask textarea:focus,
+.ask input:focus {
   outline: 1px solid var(--accent);
   border-color: var(--accent);
+}
+
+.ask-sub {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ask input {
+  display: block;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.ask-hint,
+.ask-status {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .ask button {
@@ -126,14 +163,28 @@ body {
 
 .ask button:disabled { opacity: 0.45; cursor: wait; }
 
-.neighbours {
-  flex: 1;
+.rail-scroll {
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 20px 16px;
+}
+
+.neighbours,
+.tracks,
+.coach {
+  flex: 0 0 auto;
 }
 
 .neighbours h2,
-.findings h2 {
+.tracks h2,
+.coach h2 {
   margin: 0 0 10px;
   font-size: 12px;
   letter-spacing: 0.12em;
@@ -149,7 +200,9 @@ body {
   margin: 0;
 }
 
-#neighbour-list {
+#neighbour-list,
+#track-list,
+#coach-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -173,7 +226,11 @@ body {
   align-items: baseline;
 }
 
-.card-title { font-size: 16px; font-weight: 600; }
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .card-year { color: var(--muted); font-size: 13px; }
 .card-tag { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.35; }
 
@@ -188,10 +245,192 @@ body {
   padding: 2px 6px;
 }
 
+.track-card .card-year {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.tracks-method {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.track-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.chip {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.chip.is-on {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.coach {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 42vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  padding: 12px 20px 8px;
+  background: var(--panel);
+}
+
+.coach-btn {
+  margin: 0 0 10px;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.coach-btn:disabled { opacity: 0.45; cursor: wait; }
+
+.coach-time-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.coach-time-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.coach-time {
+  margin: 0 0 12px;
+}
+
+.coach-hours {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.coach-budget-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
+#coach-budget {
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coach-card.is-late {
+  opacity: 0.45;
+}
+
+.coach-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.coach-effort {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.coach-badge {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.coach-badge.is-ok {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.coach-card { cursor: pointer; }
+
+.coach-delta {
+  color: var(--accent);
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.coach-delta.is-down { color: var(--muted); }
+
+.track-action {
+  display: inline-block;
+  margin-top: 8px;
+  margin-right: 6px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 2px 6px;
+}
+
+.track-moves {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.track-if {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 .prob {
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
-  padding-top: 12px;
+  padding: 12px 20px 16px;
+  background: var(--panel);
 }
 
 .prob-num {
@@ -213,6 +452,7 @@ body {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.4;
+  white-space: pre-line;
 }
 
 .stage {
@@ -278,7 +518,7 @@ body {
 
 .charts {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 28px;
 }
 

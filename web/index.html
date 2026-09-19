@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Prior Art</title>
-  <link rel="stylesheet" href="/web/style.css" />
+  <link rel="stylesheet" href="/web/style.css?v=7" />
 </head>
 <body>
   <header class="top">
@@ -20,19 +20,57 @@
 
   <main id="view-explore" class="view explore">
     <aside class="rail">
-      <form id="ask-form" class="ask">
-        <label for="ask-input">Describe your project.</label>
-        <textarea id="ask-input" name="text" rows="3" maxlength="4000" placeholder="A cane that maps icy sidewalks and speaks them before you reach them." required></textarea>
-        <button type="submit" id="ask-btn">Place it</button>
-      </form>
+      <div class="rail-scroll">
+        <form id="ask-form" class="ask">
+          <label for="ask-input">Describe your project.</label>
+          <textarea id="ask-input" name="text" rows="3" maxlength="4000" placeholder="A cane that maps icy sidewalks and speaks them before you reach them."></textarea>
+          <label class="ask-sub" for="ask-github">GitHub repo, optional.</label>
+          <input id="ask-github" name="github" type="text" maxlength="400" placeholder="https://github.com/you/your-hack" autocomplete="off" />
+          <label class="ask-sub" for="ask-devpost">This year's Devpost, optional.</label>
+          <input id="ask-devpost" name="devpost" type="text" maxlength="400" placeholder="hackthenorth2026.devpost.com" autocomplete="off" />
+          <p class="ask-hint">One sentence is enough. A public repo lets us read the README. A Devpost URL scores each sponsor track and says whether to strengthen it or add it.</p>
+          <button type="submit" id="ask-btn">Place it</button>
+          <p class="ask-status" id="ask-status" hidden></p>
+        </form>
 
-      <section class="neighbours" id="neighbours">
-        <h2>Nearest neighbours</h2>
-        <p class="empty" id="neighbours-empty">Twelve years of submissions. Type an idea to see what it sits next to.</p>
-        <ol id="neighbour-list"></ol>
+        <section class="neighbours" id="neighbours">
+          <h2>Nearest neighbours</h2>
+          <p class="empty" id="neighbours-empty">Twelve years of submissions. Type an idea to see what it sits next to.</p>
+          <ol id="neighbour-list"></ol>
+        </section>
+
+        <section class="tracks" id="tracks-panel" hidden>
+          <h2>Sponsor tracks</h2>
+          <p class="tracks-method" id="tracks-method"></p>
+          <div class="track-filters" id="track-filters" hidden>
+            <button type="button" class="chip" data-filter="actionable">Act</button>
+            <button type="button" class="chip" data-filter="add">Add stream</button>
+            <button type="button" class="chip" data-filter="strengthen">Strengthen</button>
+            <button type="button" class="chip" data-filter="defend">In repo</button>
+            <button type="button" class="chip is-on" data-filter="all">All</button>
+          </div>
+          <p class="empty" id="tracks-empty"></p>
+          <ol id="track-list"></ol>
+        </section>
+      </div>
+
+      <section class="coach" id="coach-panel" hidden>
+        <h2>Coach</h2>
+        <label class="coach-time-toggle" for="coach-time-on">
+          <input type="checkbox" id="coach-time-on" checked />
+          Time-aware feasibility
+        </label>
+        <div class="coach-time" id="coach-time" hidden>
+          <p class="coach-hours" id="coach-hours"></p>
+          <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
+          <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
+        </div>
+        <p class="empty" id="coach-status" hidden></p>
+        <ol id="coach-list"></ol>
       </section>
 
       <section class="prob" id="prob-panel" hidden>
+        <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
         <div class="prob-num" id="prob-num">—</div>
         <div class="prob-label">finalist probability</div>
         <div class="prob-meta" id="prob-meta"></div>
@@ -55,6 +93,6 @@
     <div id="charts" class="charts"></div>
   </main>
 
-  <script src="/web/app.js"></script>
+  <script src="/web/app.js?v=7"></script>
 </body>
 </html>

@@ -5,6 +5,8 @@ __pycache__/
 .DS_Store
 raw/
 data/emb_cache.json
+data/tracks_cache.json
+data/gptzero_cache.json
 data/*.npy
 data/model.pkl
 data/phase_*.log

@@ -1,0 +1,154 @@
+{
+  "year": 2026,
+  "source": "hackthenorth2026.devpost.com",
+  "tracks": [
+    {
+      "name": "OpenAI: API Prizes",
+      "sponsor": "OpenAI"
+    },
+    {
+      "name": "RBC: Signal in the Noise",
+      "sponsor": "RBC"
+    },
+    {
+      "name": "Shopify: Hack Shopping with AI",
+      "sponsor": "Shopify"
+    },
+    {
+      "name": "Warp: Best Developer Tool by Warp",
+      "sponsor": "Warp"
+    },
+    {
+      "name": "GPTZero: Best Use of GPTZero API",
+      "sponsor": "GPTZero"
+    },
+    {
+      "name": "QNX: Create an Embedded System with QNX that Uses AI",
+      "sponsor": "QNX"
+    },
+    {
+      "name": "Dryft: Dryft Company Challenge",
+      "sponsor": "Dryft"
+    },
+    {
+      "name": "Elastic: Find the Signal - Best Use of Elasticsearch",
+      "sponsor": "Elastic"
+    },
+    {
+      "name": "Baseten: Best Use of Baseten",
+      "sponsor": "Baseten"
+    },
+    {
+      "name": "Rox: Best AI Agent",
+      "sponsor": "Rox"
+    },
+    {
+      "name": "CSE: Log & Order",
+      "sponsor": "CSE"
+    },
+    {
+      "name": "Tether: The Best Sovereign App",
+      "sponsor": "Tether"
+    },
+    {
+      "name": "Intact: The Quoting Interface of the Future",
+      "sponsor": "Intact"
+    },
+    {
+      "name": "Dominion Dynamics: WHITEOUT",
+      "sponsor": "Dominion Dynamics"
+    },
+    {
+      "name": "Expo: Best Mobile Experience Built with Expo",
+      "sponsor": "Expo"
+    },
+    {
+      "name": "Bracket Bot: Best Use of Bracket Bot Hardware",
+      "sponsor": "Bracket Bot"
+    },
+    {
+      "name": "Sentry: Best Use of Sentry",
+      "sponsor": "Sentry"
+    },
+    {
+      "name": "Aramco Americas: Best Beginner Hack",
+      "sponsor": "Aramco Americas"
+    },
+    {
+      "name": "Human Computer Lab: Build with LeLamp SDK",
+      "sponsor": "Human Computer Lab"
+    },
+    {
+      "name": "Backboard.io: Built on Backboard",
+      "sponsor": "Backboard.io"
+    },
+    {
+      "name": "Huawei: openJiuwen Multi-Agent Challenge",
+      "sponsor": "Huawei"
+    },
+    {
+      "name": "Huawei: OMNI Live Challenge",
+      "sponsor": "Huawei"
+    },
+    {
+      "name": "MLH: Best Use of ElevenLabs",
+      "sponsor": "MLH"
+    },
+    {
+      "name": "MLH: Best Use of Gemini API",
+      "sponsor": "MLH"
+    },
+    {
+      "name": "MLH: Best Use of Tiger Data",
+      "sponsor": "MLH"
+    },
+    {
+      "name": "MLH: Best Use of Vultr",
+      "sponsor": "MLH"
+    },
+    {
+      "name": "MLH: Best Use of Snowflake API",
+      "sponsor": "MLH"
+    },
+    {
+      "name": "MLH: Best Use of MongoDB Atlas",
+      "sponsor": "MLH"
+    },
+    {
+      "name": "Solana: Best Use of Solana and Badge Hack",
+      "sponsor": "Solana"
+    },
+    {
+      "name": "Federato: Building the Federato Insurance Agent",
+      "sponsor": "Federato"
+    },
+    {
+      "name": "Browserbase: Best Use of Browserbase",
+      "sponsor": "Browserbase"
+    },
+    {
+      "name": "Linq: Best Use of Linq",
+      "sponsor": "Linq"
+    },
+    {
+      "name": "Cloudflare: Best Agent with a Brain",
+      "sponsor": "Cloudflare"
+    },
+    {
+      "name": "Zip: Best Use of Zip",
+      "sponsor": "Zip"
+    },
+    {
+      "name": "Composio: 6 months free subscription + $10k of credits for the 6 months",
+      "sponsor": "Composio"
+    },
+    {
+      "name": "Unto Labs: Best Use of Thru",
+      "sponsor": "Unto Labs"
+    },
+    {
+      "name": "Cognition: Best Use of Devin",
+      "sponsor": "Cognition"
+    }
+  ]
+}

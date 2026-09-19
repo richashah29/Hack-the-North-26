@@ -1,0 +1,54 @@
+[
+ {
+  "feature": "team_size",
+  "kind": "continuous",
+  "finalist_mean": 3.47,
+  "other_mean": 3.03,
+  "finalist_median": 4.0,
+  "other_median": 3.0,
+  "cohens_d": 0.412
+ },
+ {
+  "feature": "desc_words",
+  "kind": "continuous",
+  "finalist_mean": 471.81,
+  "other_mean": 384.52,
+  "finalist_median": 441.0,
+  "other_median": 346.0,
+  "cohens_d": 0.34
+ },
+ {
+  "feature": "n_built_with",
+  "kind": "continuous",
+  "finalist_mean": 7.61,
+  "other_mean": 6.04,
+  "finalist_median": 7.0,
+  "other_median": 6.0,
+  "cohens_d": 0.47
+ },
+ {
+  "feature": "n_other_prizes",
+  "kind": "continuous",
+  "finalist_mean": 0.37,
+  "other_mean": 0.08,
+  "finalist_median": 0.0,
+  "other_median": 0.0,
+  "cohens_d": 0.952
+ },
+ {
+  "feature": "has_video",
+  "kind": "binary",
+  "finalist_rate": 0.553,
+  "other_rate": 0.398,
+  "pct_point_diff": 15.5,
+  "risk_ratio": 1.39
+ },
+ {
+  "feature": "has_repo",
+  "kind": "binary",
+  "finalist_rate": 0.832,
+  "other_rate": 0.758,
+  "pct_point_diff": 7.4,
+  "risk_ratio": 1.1
+ }
+]
