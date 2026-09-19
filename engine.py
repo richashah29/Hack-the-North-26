@@ -307,11 +307,11 @@ class Engine:
     def _openai_embed(self, text: str, timeout: float = 10.0) -> np.ndarray:
         from openai import OpenAI
 
-        client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_BASE_URL") or None,
-            timeout=timeout,
-        )
+        kwargs = {"api_key": os.getenv("OPENAI_API_KEY"), "timeout": timeout}
+        base = (os.getenv("OPENAI_BASE_URL") or "").strip()
+        if base:
+            kwargs["base_url"] = base
+        client = OpenAI(**kwargs)
         resp = client.embeddings.create(model="text-embedding-3-small", input=text)
         return np.array(resp.data[0].embedding, dtype=np.float32)
 

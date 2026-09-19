@@ -66,11 +66,11 @@ def embed_projects(projects) -> np.ndarray:
     if missing:
         from openai import OpenAI
 
-        client = OpenAI(
-            api_key=key,
-            base_url=os.getenv("OPENAI_BASE_URL") or None,
-            timeout=60.0,
-        )
+        kwargs = {"api_key": key, "timeout": 60.0}
+        base = (os.getenv("OPENAI_BASE_URL") or "").strip()
+        if base:
+            kwargs["base_url"] = base
+        client = OpenAI(**kwargs)
         print(f"Embedding {len(missing)} new rows ({len(cache)} cached).")
         try:
             for i in range(0, len(missing), BATCH):
