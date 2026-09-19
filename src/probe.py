@@ -1,7 +1,10 @@
 """Step 1 + Step 2: slug test, robots check, and year -> gallery URL discovery."""
 import httpx
 
-HEAD = {"User-Agent": "HTN2026-student-research/1.0 (sarasdragonz@gmail.com)"}
+HEAD = {
+    "User-Agent": "HTN2026-student-research/1.0 "
+                  "(+https://github.com/richashah29/Hack-the-North-26)"
+}
 client = httpx.Client(headers=HEAD, timeout=25, follow_redirects=True)
 
 
