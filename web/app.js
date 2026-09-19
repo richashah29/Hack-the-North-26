@@ -3,15 +3,29 @@
   const tooltip = document.getElementById("tooltip");
   const form = document.getElementById("ask-form");
   const input = document.getElementById("ask-input");
+  const githubInput = document.getElementById("ask-github");
+  const devpostInput = document.getElementById("ask-devpost");
+  const askStatus = document.getElementById("ask-status");
   const askBtn = document.getElementById("ask-btn");
   const neighbourList = document.getElementById("neighbour-list");
   const neighboursEmpty = document.getElementById("neighbours-empty");
+  const tracksPanel = document.getElementById("tracks-panel");
+  const trackList = document.getElementById("track-list");
+  const tracksEmpty = document.getElementById("tracks-empty");
+  const tracksMethod = document.getElementById("tracks-method");
+  const trackFilters = document.getElementById("track-filters");
+  let tracksPayload = null;
+  let trackFilter = "all";
   const probPanel = document.getElementById("prob-panel");
   const probNum = document.getElementById("prob-num");
   const probMeta = document.getElementById("prob-meta");
   const corpusMeta = document.getElementById("corpus-meta");
   const chartsEl = document.getElementById("charts");
   const findingsNote = document.getElementById("findings-note");
+  const coachPanel = document.getElementById("coach-panel");
+  const coachBtn = document.getElementById("coach-btn");
+  const coachStatus = document.getElementById("coach-status");
+  const coachList = document.getElementById("coach-list");
 
   const ACCENT = "#e8a317";
   const MUTE = "#3c3c42";
@@ -22,6 +36,9 @@
   let hover = null;
   let pulse = 0;
   let raf = 0;
+  let lastIdeaText = "";
+  let ghost = null;
+  let ghostRaf = 0;
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -56,7 +73,7 @@
         bestD = d;
       }
     }
-    if (query) {
+    if (query && query.point) {
       const s = project(query.point);
       if (Math.hypot(s.x - mx, s.y - my) < 14) best = { ...query.point, title: "Your idea", year: "", you: true };
     }
@@ -100,7 +117,7 @@
       ctx.fill();
     }
 
-    if (query) {
+    if (query && query.point) {
       const origin = project(query.point);
       ctx.strokeStyle = "rgba(232,163,23,0.45)";
       ctx.lineWidth = 1;
@@ -130,6 +147,29 @@
       ctx.beginPath();
       ctx.arc(origin.x, origin.y, 5, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    if (ghost && ghost.from && ghost.to && query && query.point) {
+      const a = project(ghost.from);
+      const b = project(ghost.to);
+      const t = ghost.t;
+      const gx = a.x + (b.x - a.x) * t;
+      const gy = a.y + (b.y - a.y) * t;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = "rgba(244,240,234,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(gx, gy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(244,240,234,0.2)";
+      ctx.strokeStyle = YOU;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(gx, gy, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
   }
 
@@ -186,6 +226,158 @@
     }
   }
 
+  function clearGhost() {
+    ghost = null;
+    cancelAnimationFrame(ghostRaf);
+    draw();
+  }
+
+  function playGhost(move) {
+    if (!query || !query.point || !move || !move.new_point) return;
+    ghost = { from: query.point, to: move.new_point, t: 0 };
+    cancelAnimationFrame(ghostRaf);
+    const step = () => {
+      if (!ghost) return;
+      ghost.t = Math.min(1, ghost.t + 0.07);
+      draw();
+      if (ghost.t < 1) ghostRaf = requestAnimationFrame(step);
+    };
+    ghostRaf = requestAnimationFrame(step);
+  }
+
+  function renderCoach(payload) {
+    if (!coachList) return;
+    coachList.innerHTML = "";
+    const moves = (payload && payload.moves) || [];
+    if (!moves.length) {
+      if (coachStatus) {
+        coachStatus.hidden = false;
+        coachStatus.textContent = "Coach is quiet. The core map still holds.";
+      }
+      return;
+    }
+    if (coachStatus) coachStatus.hidden = true;
+    for (const move of moves) {
+      const li = document.createElement("li");
+      li.className = "card coach-card";
+      const pct = Math.round((move.delta || 0) * 100);
+      const signed = `${pct > 0 ? "+" : ""}${pct}%`;
+      li.innerHTML = `
+        <div class="card-top">
+          <span class="card-title">${escapeHtml(move.label || "")}</span>
+          <span class="coach-delta${pct < 0 ? " is-down" : ""}">${signed}</span>
+        </div>
+        <p class="card-tag">${escapeHtml(move.rationale || "")}</p>
+      `;
+      li.addEventListener("mouseenter", () => playGhost(move));
+      li.addEventListener("mouseleave", clearGhost);
+      coachList.appendChild(li);
+    }
+  }
+
+  if (coachBtn) {
+    coachBtn.addEventListener("click", async () => {
+      const text = lastIdeaText || (input && input.value.trim()) || "";
+      if (!text) return;
+      coachBtn.disabled = true;
+      if (coachPanel) coachPanel.hidden = false;
+      if (coachStatus) {
+        coachStatus.hidden = false;
+        coachStatus.textContent = "Scoring a few moves through the classifier…";
+      }
+      coachList.innerHTML = "";
+      try {
+        const res = await fetch("/api/coach", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        renderCoach(await res.json());
+      } catch (err) {
+        if (coachStatus) {
+          coachStatus.hidden = false;
+          coachStatus.textContent = "Coach skipped. Place it still works.";
+        }
+        console.error(err);
+      } finally {
+        coachBtn.disabled = false;
+      }
+    });
+  }
+
+  function renderTracks(payload) {
+    if (!tracksPanel) return;
+    tracksPayload = payload || null;
+    if (!payload) {
+      tracksPanel.hidden = true;
+      return;
+    }
+    tracksPanel.hidden = false;
+    trackList.innerHTML = "";
+    if (!payload.ok) {
+      if (trackFilters) trackFilters.hidden = true;
+      if (tracksMethod) {
+        tracksMethod.hidden = true;
+        tracksMethod.textContent = "";
+      }
+      tracksEmpty.hidden = false;
+      tracksEmpty.textContent = payload.error || "Could not load prize tracks.";
+      return;
+    }
+    if (tracksMethod) {
+      tracksMethod.hidden = false;
+      tracksMethod.textContent = "Each % is a sponsor-prize chance, not the 12 finalists. The arrow is if you ship the SDK.";
+    }
+    if (trackFilters) trackFilters.hidden = false;
+    const rows = (payload.ranked || []).filter((row) => {
+      if (trackFilter === "all") return true;
+      if (trackFilter === "actionable") return row.action === "add" || row.action === "strengthen";
+      return row.action === trackFilter;
+    });
+    if (!rows.length) {
+      tracksEmpty.hidden = false;
+      tracksEmpty.textContent = trackFilter === "actionable"
+        ? "No add/strengthen moves. Try All, or a repo that actually touches a sponsor SDK."
+        : "Nothing in this filter.";
+      return;
+    }
+    tracksEmpty.hidden = true;
+    const actionLabel = { add: "Add stream", strengthen: "Strengthen", defend: "In repo", skip: "Skip" };
+    for (const row of rows) {
+      const li = document.createElement("li");
+      li.className = "card track-card";
+      const now = Math.round((row.p_now ?? row.fit ?? 0) * 100);
+      const iff = Math.round((row.p_if ?? row.p_now ?? 0) * 100);
+      const lift = iff > now + 1 ? ` <span class="track-if">→ ${iff}% if you do this</span>` : "";
+      const moves = (row.moves || []).map((m) => `<li>${escapeHtml(m)}</li>`).join("");
+      const past = (row.past || [])
+        .slice(0, 2)
+        .map((p) => `${p.title} (${p.year}) won ${p.prize}`)
+        .join("; ");
+      li.innerHTML = `
+        <div class="card-top">
+          <span class="card-title">${escapeHtml(row.name)}</span>
+          <span class="card-year">${now}%${lift}</span>
+        </div>
+        <span class="track-action">${escapeHtml(actionLabel[row.action] || row.action || "")}</span>
+        ${moves ? `<ul class="track-moves">${moves}</ul>` : ""}
+        ${past ? `<p class="card-tag">${escapeHtml(past)}</p>` : ""}
+      `;
+      trackList.appendChild(li);
+    }
+  }
+
+  if (trackFilters) {
+    trackFilters.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-filter]");
+      if (!btn) return;
+      trackFilter = btn.dataset.filter;
+      trackFilters.querySelectorAll(".chip").forEach((c) => c.classList.toggle("is-on", c === btn));
+      if (tracksPayload) renderTracks(tracksPayload);
+    });
+  }
+
   function renderProb(data) {
     probPanel.hidden = false;
     const pct = Math.round((data.probability || 0) * 100);
@@ -196,7 +388,20 @@
     const spread = Array.isArray(m.auc_spread) && m.auc_spread.length === 2
       ? ` (${Number(m.auc_spread[0]).toFixed(2)}–${Number(m.auc_spread[1]).toFixed(2)})`
       : "";
-    probMeta.textContent = `AUC ${auc}${spread}  ·  ${n} training projects  ·  leave-one-year-out`;
+    let line = `Calibrated from corpus signals, not neighbour similarity.\nAUC ${auc}${spread}  ·  ${n} training projects  ·  leave-one-year-out`;
+    const g = data.github;
+    if (g && g.ok) {
+      const bits = [g.full_name];
+      if (g.languages && g.languages.length) bits.push(g.languages.slice(0, 4).join(", "));
+      if (g.hardware) bits.push("hardware");
+      line = `Read ${bits.join(" · ")}\n` + line;
+    } else if (g && !g.ok) {
+      line = `GitHub unread (${g.error || "failed"}). Used the prompt only.\n` + line;
+    }
+    if (Array.isArray(data.why) && data.why.length) {
+      line += "\n" + data.why[0];
+    }
+    probMeta.textContent = line;
   }
 
   function escapeHtml(s) {
@@ -208,26 +413,74 @@
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const text = input.value.trim();
-    if (!text) return;
+    const github = (githubInput && githubInput.value.trim()) || "";
+    const devpost = (devpostInput && devpostInput.value.trim()) || "";
+    if (!text && !github) {
+      if (askStatus) {
+        askStatus.hidden = false;
+        askStatus.textContent = "Add a sentence or a GitHub link.";
+      }
+      return;
+    }
     askBtn.disabled = true;
+    if (askStatus) {
+      askStatus.hidden = false;
+      askStatus.textContent = github && devpost
+        ? "Reading the repo and prize tracks…"
+        : github
+          ? "Reading the repo…"
+          : devpost
+            ? "Reading prize tracks…"
+            : "";
+    }
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, github, devpost }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       query = data;
+      lastIdeaText = text;
       pulse = 0;
+      ghost = null;
+      cancelAnimationFrame(ghostRaf);
       cancelAnimationFrame(raf);
       renderNeighbours(data.neighbours || []);
+      renderTracks(data.tracks);
       renderProb(data);
+      if (coachPanel) {
+        coachPanel.hidden = true;
+        if (coachList) coachList.innerHTML = "";
+        if (coachStatus) coachStatus.hidden = true;
+      }
+      const neighbours = document.getElementById("neighbours");
+      if (neighbours) {
+        neighbours.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+      if (askStatus) {
+        const bits = [];
+        const g = data.github;
+        if (g && g.ok) bits.push(`README + stack from ${g.full_name}`);
+        else if (g && !g.ok) bits.push("Could not read that repo. Placed from the prompt");
+        const t = data.tracks;
+        if (t && t.ok) bits.push(`ranked ${(t.ranked || []).length} of ${t.n} tracks`);
+        else if (t && !t.ok) bits.push(t.error || "prize tracks unread");
+        if (data.source === "elastic") bits.push("neighbours via Elasticsearch hybrid");
+        if (bits.length) {
+          askStatus.hidden = false;
+          askStatus.textContent = bits.join(". ") + ".";
+        } else {
+          askStatus.hidden = true;
+        }
+      }
       draw();
       raf = requestAnimationFrame(tick);
     } catch (err) {
       neighboursEmpty.hidden = false;
       neighboursEmpty.textContent = "Could not place that idea. Try again.";
+      if (askStatus) askStatus.hidden = true;
       console.error(err);
     } finally {
       askBtn.disabled = false;
@@ -285,7 +538,7 @@
   function drawLines(chart) {
     const svg = svgEl("svg", { viewBox: "0 0 400 220" });
     const series = chart.series || [];
-    const years = [...new Set(series.flatMap((s) => s.points.map((p) => p.year)))].sort();
+    const years = [...new Set(series.flatMap((s) => s.points.map((p) => p.year)))].sort((a, b) => a - b);
     const values = series.flatMap((s) => s.points.map((p) => p.value));
     const max = Math.max(0.01, ...values);
     const xOf = (year) => 30 + ((year - years[0]) / (years[years.length - 1] - years[0] || 1)) * 350;
@@ -298,12 +551,46 @@
         .join(" ");
       svg.appendChild(svgEl("path", { d, class: classes[i % classes.length] }));
     });
-    years.forEach((y) => {
+    years.forEach((y, i) => {
+      if (years.length > 8 && i % 2 === 1 && i !== years.length - 1) return;
       const t = svgEl("text", { x: xOf(y), y: 205, "text-anchor": "middle", class: "chart-axis" });
       t.textContent = String(y);
       svg.appendChild(t);
     });
     return svg;
+  }
+
+  function appendChart(chart) {
+    const box = document.createElement("article");
+    box.className = "chart";
+    const h = document.createElement("h2");
+    h.className = "chart-claim";
+    h.textContent = chart.claim;
+    box.appendChild(h);
+    box.appendChild(chart.kind === "lines" ? drawLines(chart) : drawBars(chart));
+    if (chart.kind === "lines" && chart.series) {
+      const key = document.createElement("div");
+      key.className = "chart-key";
+      key.textContent = chart.series.map((s) => s.label).join("   ·   ");
+      box.appendChild(key);
+    }
+    chartsEl.appendChild(box);
+  }
+
+  function chartFromAiWriting(ai) {
+    const years = ai.years || [];
+    const probs = ai.ai_prob || [];
+    if (!years.length || years.length !== probs.length) return null;
+    return {
+      claim: ai.claim || "Writing shifts toward AI-generated after 2023",
+      kind: "lines",
+      series: [
+        {
+          label: "mean AI-likelihood of sampled writeups",
+          points: years.map((year, i) => ({ year, value: Number(probs[i]) || 0 })),
+        },
+      ],
+    };
   }
 
   async function loadFindings() {
@@ -316,21 +603,10 @@
     }
     chartsEl.innerHTML = "";
     for (const chart of data.charts || []) {
-      const box = document.createElement("article");
-      box.className = "chart";
-      const h = document.createElement("h2");
-      h.className = "chart-claim";
-      h.textContent = chart.claim;
-      box.appendChild(h);
-      box.appendChild(chart.kind === "lines" ? drawLines(chart) : drawBars(chart));
-      if (chart.kind === "lines" && chart.series) {
-        const key = document.createElement("div");
-        key.className = "chart-key";
-        key.textContent = chart.series.map((s) => s.label).join("   ·   ");
-        box.appendChild(key);
-      }
-      chartsEl.appendChild(box);
+      appendChart(chart);
     }
+    const aiChart = data.ai_writing ? chartFromAiWriting(data.ai_writing) : null;
+    if (aiChart) appendChart(aiChart);
   }
 
   async function boot() {

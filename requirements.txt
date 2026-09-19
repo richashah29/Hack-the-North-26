@@ -9,3 +9,4 @@ python-dotenv>=1.0
 openai>=1.50
 joblib>=1.4
 sentry-sdk[fastapi]>=2.0
+elasticsearch>=8.14,<10

@@ -215,6 +215,12 @@ def main() -> int:
     projects = load_corpus()
     print(f"Corpus: {len(projects)} rows, {sum(p.finalist for p in projects)} finalists")
     embeddings = embed_projects(projects)
+    try:
+        from elastic import index_projects
+
+        index_projects(projects, embeddings)
+    except Exception as e:
+        print(f"Elasticsearch index skipped ({e})")
     reducer, _ = reduce_map(projects, embeddings)
     blob = train(projects, embeddings)
     blob["reducer"] = reducer
