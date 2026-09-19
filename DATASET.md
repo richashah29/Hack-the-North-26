@@ -1,22 +1,13 @@
 # Hack the North, 2014-2025
 
 3,443 project submissions across 12 years of Hack the North, with
-161 finalist labels. Assembled 19 September 2026 from Devpost's public project
+161 finalist labels. Assembled from Devpost's public project
 galleries and museum.hackthenorth.com.
 
 As far as we know nobody has put this together before. Devpost gives you one
 hackathon at a time; the museum gives you the winners without the field they beat.
-The interesting object is the pair.
+What about combining both of these together?
 
-## Provenance
-
-| | |
-|---|---|
-| Projects | Devpost galleries, `hackthenorth{year}.devpost.com/project-gallery` |
-| Finalist labels | `museum.hackthenorth.com` (161 slugs) cross-checked against Devpost prize text |
-| Join key | Devpost `slug`, exact - no fuzzy matching |
-| Label agreement | 78.9% of finalists confirmed by both sources |
-| Crawl | ~0.7s/request, single-threaded, cached. `robots.txt` permits it |
 
 ## Coverage
 
@@ -35,9 +26,6 @@ The interesting object is the pair.
 |   2024 |        235 |          12 |          464   |        41.7 |       88.1 |               5.1 |
 |   2025 |        260 |          12 |          465   |        60   |       90   |               4.6 |
 
-2026 is absent on purpose: its gallery was still empty while HTN 2026 was being
-judged. That is the population a judge's query represents - an unlabelled project
-being compared against everything that came before.
 
 ## Columns
 
@@ -45,7 +33,7 @@ being compared against everything that came before.
 |---|---|---|
 | `slug` | string | Devpost slug. PRIMARY KEY. devpost.com/software/<slug> |
 | `year` | int16 | HTN edition the project was submitted to (2014-2026) |
-| `url` | string | Canonical Devpost project URL |
+| `url` | string | Devpost project URL |
 | `museum_url` | string | museum.hackthenorth.com/<slug> if a finalist, else '' |
 | `title` | string | Project name |
 | `tagline` | string | One-line pitch under the title |
@@ -75,7 +63,7 @@ being compared against everything that came before.
 - `has_repo` is any `github.com` link on the page, which includes links to
   libraries used rather than the team's own repo.
 - Finalist counts are higher in 2020 (23) and 2021 (17); those were the
-  virtual years and HTN recognised more projects. Not a join error.
+  virtual years and HTN recognised more projects.
 - Prize tracks in 2014 were unnamed - every award reads "Winner" - so 2014
   finalist labels rest on the museum alone.
 - `description` is the writeup only. The tag list and link nav are stripped, so

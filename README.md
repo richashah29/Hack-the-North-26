@@ -1,9 +1,3 @@
-# Prior Art
-
-A map of every Hack the North project since 2014. Type an idea; see its nearest neighbours and a leave-one-year-out finalist probability.
-
-Sara owns the app (`SPEC.md`). Richa owns the corpus (`RICHA.md`). The join key is `slug`.
-
 ## Run
 
 ```bash
