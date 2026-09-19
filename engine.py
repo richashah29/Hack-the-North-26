@@ -983,7 +983,7 @@ class Engine:
                     r = client.post(url, params={"key": key}, json=payload, timeout=remaining)
                 except Exception as exc:
                     last_err = exc
-                    break
+                    continue
                 if r.status_code >= 400:
                     last_err = RuntimeError(f"{model} {r.status_code}")
                     continue
@@ -1039,7 +1039,10 @@ class Engine:
             specs = self._gemini_coach_moves(document, prize_names=prize_prompt_names(tracks))
         except Exception as exc:
             print(f"coach gemini skipped ({exc})")
-            return json_safe(out)
+            if _gemini_unavailable(exc):
+                specs = _fallback_coach_specs(document)
+            else:
+                return json_safe(out)
         specs = filter_coach_moves(specs, tracks=tracks, projects=self.projects)[:4]
         if not specs:
             return json_safe(out)
@@ -1101,6 +1104,57 @@ class Engine:
         moves.sort(key=lambda m: -m["delta"])
         out["moves"] = moves
         return json_safe(out)
+
+
+def _gemini_unavailable(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    needles = (
+        "unset",
+        "timed out",
+        "timeout",
+        "connect",
+        "network",
+        "503",
+        "429",
+        "500",
+        "404",
+    )
+    return any(n in msg for n in needles)
+
+
+def _fallback_coach_specs(idea: str) -> list[dict[str, Any]]:
+    """Phrase-only moves when Gemini is down. No prize names."""
+    core = (idea or "this project").strip() or "this project"
+    return [
+        {
+            "label": "Ship a physical build",
+            "rationale": "A thing a judge can hold reads as more finished than a deck.",
+            "reframed_description": f"{core} Built as a physical prototype you can demo in person.",
+            "effort_hours": 6.0,
+            "features": {"hardware": True, "has_video": False, "extra_tech_tags": 1},
+        },
+        {
+            "label": "Film a live demo",
+            "rationale": "A short video of it working is the fastest way to make the writeup feel real.",
+            "reframed_description": f"{core} Includes a filmed live demo of the working prototype.",
+            "effort_hours": 3.0,
+            "features": {"hardware": False, "has_video": True, "extra_tech_tags": 0},
+        },
+        {
+            "label": "Name a real stack",
+            "rationale": "Specific tools in the writeup read as a build, not a pitch.",
+            "reframed_description": f"{core} Names a concrete stack and how each piece is used on judging day.",
+            "effort_hours": 2.0,
+            "features": {"hardware": False, "has_video": False, "extra_tech_tags": 2},
+        },
+        {
+            "label": "Tighten the judging story",
+            "rationale": "One sentence about what a judge should see in thirty seconds.",
+            "reframed_description": f"{core} Opens with a thirty-second judging-day demo and what it proves.",
+            "effort_hours": 2.0,
+            "features": {"hardware": False, "has_video": False, "extra_tech_tags": 0},
+        },
+    ]
 
 
 def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:

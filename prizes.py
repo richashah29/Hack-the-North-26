@@ -281,7 +281,7 @@ _PRIZE_SPAN_RE = re.compile(
     |
     \bbest\s+[\w][\w .&+/'’-]{0,40}?\s*(?:prize|prizes|challenge|track|award|hack|agent|tool|app|experience)\b
     |
-    \b[\w][\w .&+/'’-]{1,50}\s+(?:prizes|prize|challenge|tracks|track|awards|award)\b
+    \b(?:[\w+&/'’-]+\s+){0,3}(?:prizes|prize|challenge|tracks|track|awards|award)\b
     """,
     re.I | re.X,
 )
@@ -297,6 +297,12 @@ _GENERIC_PRIZE_SPANS = {
     "prize tracks",
     "sponsor track",
     "sponsor tracks",
+    "specified sponsor track",
+    "designated sponsor track",
+    "allowed sponsor track",
+    "the specified sponsor track",
+    "the designated sponsor track",
+    "the allowed sponsor track",
     "track",
     "tracks",
     "the track",
@@ -332,6 +338,31 @@ _PRIZE_FILLER = {
     "and",
     "for",
     "by",
+    "specified",
+    "designated",
+    "allowed",
+    "listed",
+    "named",
+    "sponsor",
+    "sponsors",
+    "this",
+    "that",
+    "any",
+    "your",
+    "their",
+    "our",
+    "real",
+    "actual",
+    "official",
+    "narrative",
+    "story",
+    "project",
+    "idea",
+    "core",
+    "whole",
+    "toward",
+    "towards",
+    "tightly",
 }
 
 
@@ -406,6 +437,9 @@ def _allowed_prize_index(
         name = _norm_prize(t.get("name") or "")
         if name:
             names.append(name)
+            last = name.split()[-1]
+            if len(last) >= 4 and last not in skip_parts and last not in _PRIZE_FILLER:
+                names.append(last)
         sponsor = _norm_prize(t.get("sponsor") or "")
         if len(sponsor) >= 3:
             sponsors.add(sponsor)
@@ -432,11 +466,15 @@ def _span_is_allowed(span: str, names: list[str], sponsors: set[str]) -> bool:
     for a in names:
         if len(a) >= 8 and (a in n or n in a):
             return True
-        if 4 <= len(a) < 8 and a == n:
+        if 4 <= len(a) < 8 and (a == n or a in n.split()):
             return True
     tokens = [tok for tok in n.split() if tok not in _PRIZE_FILLER]
+    if not tokens:
+        return True
     for tok in tokens:
         if tok in sponsors:
+            return True
+        if any(len(a) >= 4 and a == tok for a in names):
             return True
     joined = " ".join(tokens)
     for s in sponsors:
