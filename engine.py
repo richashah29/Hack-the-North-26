@@ -754,10 +754,6 @@ class Engine:
             "Propose moves such as: ship a physical build, film a live demo, name a real stack, "
             "or tighten the story toward a judging-day demo. JSON only."
         )
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-1.5-flash:generateContent"
-        )
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -766,17 +762,28 @@ class Engine:
                 "responseMimeType": "application/json",
             },
         }
-        with httpx.Client(timeout=8.0) as client:
-            r = client.post(url, params={"key": key}, json=payload)
-            r.raise_for_status()
-            body = r.json()
-        parts = (
-            (((body.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
-        )
-        raw = "".join(str(p.get("text") or "") for p in parts).strip()
-        if not raw:
-            raise RuntimeError("Gemini returned empty")
-        return _parse_coach_moves(raw)
+        # 1.5-flash is retired; this key is a new-user key so 2.5-flash 404s too.
+        last_err: Exception | None = None
+        with httpx.Client(timeout=12.0) as client:
+            for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
+                url = (
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{model}:generateContent"
+                )
+                r = client.post(url, params={"key": key}, json=payload)
+                if r.status_code >= 400:
+                    last_err = RuntimeError(f"{model} {r.status_code}")
+                    continue
+                body = r.json()
+                parts = (
+                    (((body.get("candidates") or [{}])[0].get("content") or {}).get("parts"))
+                    or []
+                )
+                raw = "".join(str(p.get("text") or "") for p in parts).strip()
+                if raw:
+                    return _parse_coach_moves(raw)
+                last_err = RuntimeError(f"{model} empty")
+        raise last_err or RuntimeError("Gemini returned empty")
 
     def coach(self, idea: str) -> dict[str, Any]:
         """Propose 3–4 moves. Probabilities come from the classifier, never Gemini."""
