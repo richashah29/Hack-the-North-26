@@ -418,6 +418,7 @@ class Engine:
         if n < 80 or prob is None:
             # tiny sample: a fitted model will flash 0% or 100%. Use the prior.
             prob = 0.55 * prior + 0.45 * neighbour_rate
+            model_meta = {**model_meta, "auc": None, "auc_spread": []}
         else:
             prob = 0.75 * float(prob) + 0.25 * prior
 

@@ -32,6 +32,7 @@ if SENTRY_DSN:
         dsn=SENTRY_DSN,
         traces_sample_rate=1.0,
         profiles_sample_rate=1.0,
+        enable_tracing=True,
         send_default_pii=False,
         integrations=[StarletteIntegration(), FastApiIntegration()],
     )

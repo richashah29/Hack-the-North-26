@@ -340,19 +340,26 @@
     corpusMeta.textContent = `${cfg.n} projects  ·  ${cfg.n_finalists} finalists  ·  ${cfg.source}`;
     console.log("map", mapData);
     if (cfg.sentry_dsn) {
+      const key = cfg.sentry_dsn.split("://")[1]?.split("@")[0];
       const s = document.createElement("script");
-      s.src = "https://browser.sentry-cdn.com/8.33.1/bundle.tracing.replay.min.js";
+      s.src = `https://js.sentry-cdn.com/${key}.min.js`;
       s.crossOrigin = "anonymous";
-      s.onload = () => {
-        window.Sentry && window.Sentry.init({
+      const init = () => {
+        if (!window.Sentry) return;
+        window.Sentry.init({
           dsn: cfg.sentry_dsn,
           tracesSampleRate: 1.0,
           replaysSessionSampleRate: 1.0,
+          replaysOnErrorSampleRate: 1.0,
           integrations: [
-            window.Sentry.browserTracingIntegration(),
-            window.Sentry.replayIntegration(),
-          ],
+            window.Sentry.browserTracingIntegration && window.Sentry.browserTracingIntegration(),
+            window.Sentry.replayIntegration && window.Sentry.replayIntegration(),
+          ].filter(Boolean),
         });
+      };
+      s.onload = () => {
+        if (window.Sentry && window.Sentry.onLoad) window.Sentry.onLoad(init);
+        else init();
       };
       document.head.appendChild(s);
     }
