@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,10 +26,68 @@ from sklearn.metrics.pairwise import cosine_similarity
 from schema import Project, ROOT, load_corpus
 
 DATA = ROOT / "data"
+
+
+def _env_path(var: str, default: Path) -> Path:
+    raw = (os.getenv(var) or "").strip()
+    return Path(raw).expanduser() if raw else default
+
+
+def map_path() -> Path:
+    return _env_path("MAP_PATH", DATA / "map.json")
+
+
+def emb_path() -> Path:
+    return _env_path("EMB_PATH", DATA / "embeddings.npy")
+
+
+def model_path() -> Path:
+    return _env_path("MODEL_PATH", DATA / "model.pkl")
+
+
+def event_path() -> Path:
+    return _env_path("EVENT_PATH", DATA / "event.json")
+
+
+# build.py and tests import these names; they follow env at import time.
 MAP_PATH = DATA / "map.json"
 EMB_PATH = DATA / "embeddings.npy"
 MODEL_PATH = DATA / "model.pkl"
 EVENT_PATH = DATA / "event.json"
+
+
+def json_safe(obj: Any) -> Any:
+    """Python JSON types only. Numpy / NaN / inf become numbers the UI can show."""
+    if obj is None or isinstance(obj, (str, bool, int)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return json_safe(obj.tolist())
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating, float)):
+        val = float(obj)
+        if val != val or val == float("inf") or val == float("-inf"):
+            return 0.0
+        return val
+    if isinstance(obj, Path):
+        return str(obj)
+    return str(obj)
+
+
+def finite_unit(value: Any, default: float = 0.0) -> float:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return default
+    if val != val or val == float("inf") or val == float("-inf"):
+        return default
+    return max(0.0, min(1.0, val))
 
 TECH_HINTS = (
     "python",
@@ -106,11 +165,11 @@ def _point_payload(project: Project, x: float, y: float) -> dict[str, Any]:
     return {
         "x": float(x),
         "y": float(y),
-        "slug": project.slug,
-        "title": project.title,
-        "year": project.year,
-        "finalist": project.finalist,
-        "tagline": project.tagline,
+        "slug": str(project.slug),
+        "title": str(project.title or ""),
+        "year": int(project.year or 0),
+        "finalist": bool(project.finalist),
+        "tagline": str(project.tagline or ""),
     }
 
 
@@ -280,8 +339,15 @@ class Engine:
         self.tfidf: Any = None
         self.fallback_pca: PCA | None = None
         self.fallback_coords: np.ndarray | None = None
-        self.openai_ok = bool(os.getenv("OPENAI_API_KEY"))
+        self.openai_ok = bool((os.getenv("OPENAI_API_KEY") or "").strip())
         self.source = "sample.json"
+        self.embeddings_norm: np.ndarray | None = None
+        # UMAP/numba transform is not thread-safe; FastAPI runs sync routes
+        # on a threadpool so two simultaneous /api/ask calls can kill the worker.
+        self._umap_lock = threading.Lock()
+
+    def _openai_configured(self) -> bool:
+        return bool((os.getenv("OPENAI_API_KEY") or "").strip())
 
     def load(self) -> None:
         from schema import corpus_source
@@ -289,12 +355,23 @@ class Engine:
         self.projects = load_corpus()
         self.source = corpus_source()
         self.by_slug = {p.slug: p for p in self.projects}
+        self._require_prizes_file()
+        self._require_event_file()
         self._fit_fallback()
         self._load_embeddings()
         self._load_map()
         self._load_model()
         if self.model_blob is None:
-            self._fit_fallback_model()
+            if len(self.projects) <= 120:
+                print("artifact model.pkl missing — fitting TF-IDF fallback classifier")
+                self._fit_fallback_model()
+            else:
+                print("artifact model.pkl missing — scoring from corpus signals only")
+        self._assert_aligned()
+        n = len(self.projects)
+        n_emb = 0 if self.embeddings is None else int(self.embeddings.shape[0])
+        n_map = len((self.map_data or {}).get("points") or [])
+        print(f"loaded corpus={n} embeddings={n_emb} map={n_map}")
 
     def _fit_fallback(self) -> None:
         texts = [p.embed_text() for p in self.projects]
@@ -318,24 +395,95 @@ class Engine:
             coords[i, 1] += (1 - h - 0.5) * 0.25
         self.fallback_coords = coords
 
+    def _require_prizes_file(self) -> None:
+        from prizes import prizes_file
+
+        src = prizes_file()
+        if not src.exists():
+            raise RuntimeError(f"prizes.json missing at {src}")
+        try:
+            raw = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"prizes.json unreadable at {src}: {exc}") from exc
+        tracks = raw if isinstance(raw, list) else (raw or {}).get("tracks")
+        if not tracks:
+            raise RuntimeError(f"prizes.json has no tracks at {src}")
+
+    def _require_event_file(self) -> None:
+        src = event_path()
+        if not src.exists():
+            raise RuntimeError(f"event.json missing at {src}")
+        try:
+            raw = json.loads(src.read_text(encoding="utf-8"))
+            datetime.fromisoformat(str(raw.get("build_end") or ""))
+        except Exception as exc:
+            raise RuntimeError(f"event.json unreadable at {src}: {exc}") from exc
+
+    def _assert_aligned(self) -> None:
+        n = len(self.projects)
+        if self.embeddings is not None and int(self.embeddings.shape[0]) != n:
+            raise RuntimeError(
+                f"embeddings.npy has {self.embeddings.shape[0]} rows but corpus has {n}. "
+                "Neighbour rows would attach to the wrong projects. Rebuild with build.py."
+            )
+        n_map = len((self.map_data or {}).get("points") or [])
+        if n_map and n_map != n:
+            raise RuntimeError(
+                f"map.json has {n_map} points but corpus has {n}. "
+                "The map would pin the wrong projects. Rebuild with build.py."
+            )
+
     def _load_embeddings(self) -> None:
-        if EMB_PATH.exists():
-            arr = np.load(EMB_PATH)
-            if arr.shape[0] == len(self.projects):
-                self.embeddings = arr
-                return
-        self.embeddings = None
+        src = emb_path()
+        if not src.exists():
+            print(f"artifact embeddings.npy missing at {src} — TF-IDF fallback")
+            self.embeddings = None
+            self.embeddings_norm = None
+            return
+        try:
+            arr = np.load(src)
+        except Exception as exc:
+            raise RuntimeError(f"embeddings.npy unreadable at {src}: {exc}") from exc
+        if arr.shape[0] != len(self.projects):
+            raise RuntimeError(
+                f"embeddings.npy has {arr.shape[0]} rows but corpus has {len(self.projects)}. "
+                "Neighbour rows would attach to the wrong projects. Rebuild with build.py."
+            )
+        self.embeddings = arr
+        norms = np.linalg.norm(arr, axis=1, keepdims=True) + 1e-9
+        self.embeddings_norm = arr / norms
 
     def _load_map(self) -> None:
-        if MAP_PATH.exists():
-            try:
-                payload = json.loads(MAP_PATH.read_text(encoding="utf-8"))
-                if payload.get("points"):
-                    self.map_data = payload
-                    return
-            except json.JSONDecodeError:
-                pass
-        self.map_data = self._map_from_fallback()
+        src = map_path()
+        if not src.exists():
+            print(f"artifact map.json missing at {src} — PCA fallback coordinates")
+            self.map_data = json_safe(self._map_from_fallback())
+            return
+        try:
+            payload = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"map.json unreadable at {src}: {exc}") from exc
+        points = payload.get("points") if isinstance(payload, dict) else None
+        if not points:
+            raise RuntimeError(f"map.json has no points at {src}")
+        if len(points) != len(self.projects):
+            raise RuntimeError(
+                f"map.json has {len(points)} points but corpus has {len(self.projects)}. "
+                "The map would pin the wrong projects. Rebuild with build.py."
+            )
+        self.map_data = json_safe(payload)
+
+    def _load_model(self) -> None:
+        src = model_path()
+        if not src.exists():
+            print(f"artifact model.pkl missing at {src}")
+            self.model_blob = None
+            return
+        try:
+            self.model_blob = joblib.load(src)
+        except Exception as exc:
+            print(f"artifact model.pkl unreadable at {src} ({exc}) — fallback")
+            self.model_blob = None
 
     def _map_from_fallback(self) -> dict[str, Any]:
         assert self.fallback_coords is not None
@@ -347,19 +495,17 @@ class Engine:
         ]
         return {"points": points, "bounds": _bounds(xs, ys)}
 
-    def _load_model(self) -> None:
-        if MODEL_PATH.exists() and self.embeddings is not None:
-            try:
-                self.model_blob = joblib.load(MODEL_PATH)
-                return
-            except Exception:
-                self.model_blob = None
-        self.model_blob = None
-
     def _fit_fallback_model(self) -> None:
         """Small LOYO logreg on the in-memory TF-IDF so /api/ask has a number
         before build.py has run. Honest AUC; do not pretend it is the real model.
         """
+        try:
+            self._fit_fallback_model_inner()
+        except Exception as exc:
+            print(f"artifact fallback classifier skipped ({exc})")
+            self.model_blob = None
+
+    def _fit_fallback_model_inner(self) -> None:
         from sklearn.calibration import CalibratedClassifierCV
         from sklearn.linear_model import LogisticRegression
         from sklearn.metrics import roc_auc_score
@@ -383,7 +529,11 @@ class Engine:
             ]
         )
         folds = []
-        for train_idx, test_idx in LeaveOneGroupOut().split(x, y, groups=years):
+        try:
+            splits = list(LeaveOneGroupOut().split(x, y, groups=years))
+        except ValueError:
+            splits = []
+        for train_idx, test_idx in splits:
             if len(set(y[train_idx])) < 2 or len(set(y[test_idx])) < 2:
                 continue
             pipe.fit(x[train_idx], y[train_idx])
@@ -426,11 +576,11 @@ class Engine:
                 continue
             out.append(
                 {
-                    "slug": p.slug,
-                    "title": p.title,
-                    "year": p.year,
-                    "tagline": p.tagline,
-                    "finalist": p.finalist,
+                    "slug": str(p.slug),
+                    "title": str(p.title or ""),
+                    "year": int(p.year or 0),
+                    "tagline": str(p.tagline or ""),
+                    "finalist": bool(p.finalist),
                     "similarity": round(float(sim), 4),
                 }
             )
@@ -449,21 +599,26 @@ class Engine:
             coords = np.array([coords[0], 0.0])
         return pairs, coords
 
-    def _openai_embed(self, text: str, timeout: float = 10.0) -> np.ndarray:
+    def _openai_embed(self, text: str, timeout: float = 6.0) -> np.ndarray:
+        key = (os.getenv("OPENAI_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY unset")
         from openai import OpenAI
 
-        kwargs = {"api_key": os.getenv("OPENAI_API_KEY"), "timeout": timeout}
+        kwargs = {"api_key": key, "timeout": timeout, "max_retries": 0}
         base = (os.getenv("OPENAI_BASE_URL") or "").strip()
         if base:
             kwargs["base_url"] = base
         client = OpenAI(**kwargs)
-        resp = client.embeddings.create(model="text-embedding-3-small", input=text)
+        resp = client.embeddings.create(model="text-embedding-3-small", input=text[:8000])
         return np.array(resp.data[0].embedding, dtype=np.float32)
 
     def _openai_neighbours(self, vec: np.ndarray, k: int = 5) -> list[tuple[str, float]]:
         assert self.embeddings is not None
         a = vec / (np.linalg.norm(vec) + 1e-9)
-        b = self.embeddings / (np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-9)
+        b = self.embeddings_norm
+        if b is None:
+            b = self.embeddings / (np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-9)
         sims = b @ a
         order = np.argsort(-sims)[:k]
         return [(self.projects[i].slug, float(sims[i])) for i in order]
@@ -486,7 +641,8 @@ class Engine:
         if reducer is None:
             return None
         try:
-            xy = reducer.transform(vec.reshape(1, -1))[0]
+            with self._umap_lock:
+                xy = reducer.transform(vec.reshape(1, -1))[0]
             return np.array(xy, dtype=float)
         except Exception:
             return None
@@ -504,13 +660,27 @@ class Engine:
             "n_finalists": sum(1 for p in self.projects if p.finalist),
         }
         if not self.model_blob:
-            return None, meta
+            return None, json_safe(meta)
+        auc = self.model_blob.get("auc")
+        try:
+            auc_f = float(auc) if auc is not None else None
+        except (TypeError, ValueError):
+            auc_f = None
+        if auc_f is not None and (auc_f != auc_f or auc_f < 0.4 or auc_f > 1.0):
+            auc_f = None
+        spread_raw = self.model_blob.get("auc_spread") or []
+        spread = []
+        for s in spread_raw:
+            try:
+                spread.append(round(float(s), 3))
+            except (TypeError, ValueError):
+                continue
         meta.update(
             {
-                "auc": self.model_blob.get("auc"),
-                "auc_spread": self.model_blob.get("auc_spread") or [],
-                "n_train": self.model_blob.get("n_train", meta["n_train"]),
-                "n_finalists": self.model_blob.get("n_finalists", meta["n_finalists"]),
+                "auc": None if auc_f is None else round(float(auc_f), 3),
+                "auc_spread": spread,
+                "n_train": int(self.model_blob.get("n_train", meta["n_train"]) or meta["n_train"]),
+                "n_finalists": int(self.model_blob.get("n_finalists", meta["n_finalists"]) or meta["n_finalists"]),
             }
         )
         clf = self.model_blob.get("model")
@@ -535,9 +705,9 @@ class Engine:
                 idx = classes.index(True)
             else:
                 idx = int(np.argmax(proba))
-            return float(proba[idx]), meta
+            return float(proba[idx]), json_safe(meta)
         except Exception:
-            return None, meta
+            return None, json_safe(meta)
 
     def ask(self, text: str, github: str = "", devpost: str = "") -> dict[str, Any]:
         prompt = (text or "").strip()
@@ -545,7 +715,7 @@ class Engine:
         if github.strip():
             from github_repo import compose_embed_text, fetch_repo
 
-            repo = fetch_repo(github)
+            repo = fetch_repo(github, timeout=5.0)
             document = compose_embed_text(prompt, repo)
         else:
             from github_repo import compose_embed_text
@@ -560,14 +730,11 @@ class Engine:
         embed_vec = None
         point = None
         pairs: list[tuple[str, float]] = []
-        source = "local"
+        source = "tfidf"
 
-        if self.openai_ok and self.embeddings is not None:
+        if self._openai_configured() and self.embeddings is not None:
             try:
-                t0 = time.monotonic()
-                embed_vec = self._openai_embed(document, timeout=10.0)
-                if time.monotonic() - t0 > 10:
-                    raise TimeoutError("embed exceeded 10s")
+                embed_vec = self._openai_embed(document, timeout=6.0)
                 xy = self._openai_point(embed_vec)
                 if xy is None and self.fallback_pca is not None:
                     _, xy = self._tfidf_neighbours(document)
@@ -580,8 +747,8 @@ class Engine:
             pairs, xy = self._tfidf_neighbours(document)
             point = {"x": float(xy[0]), "y": float(xy[1])}
             embed_vec = None
-            source = "local"
-            print("neighbours source=local (tfidf)")
+            source = "tfidf"
+            print("neighbours source=tfidf")
         else:
             try:
                 pairs = self.es_neighbours(embed_vec, document, k=5)
@@ -611,7 +778,7 @@ class Engine:
         if (devpost or "").strip():
             from prizes import fetch_tracks, advise_tracks
 
-            fetched = fetch_tracks(devpost)
+            fetched = fetch_tracks(devpost, timeout=6.0)
             if fetched.get("ok"):
                 ranked = advise_tracks(
                     document,
@@ -663,21 +830,23 @@ class Engine:
                     "error": (repo or {}).get("error") or "could not read repo",
                 }
 
-        return {
-            "point": point,
-            "neighbours": self.neighbour_records(pairs),
-            "probability": round(float(max(0.0, min(1.0, prob))), 4),
-            "model": model_meta,
-            "backend": used,
-            "source": source,
-            "github": github_out,
-            "why": why,
-            "signals": {
-                "hardware": signals["hardware"],
-                "tags": signals["tags"][:8],
-            },
-            "tracks": tracks_out,
-        }
+        return json_safe(
+            {
+                "point": point,
+                "neighbours": self.neighbour_records(pairs),
+                "probability": round(finite_unit(prob), 4),
+                "model": model_meta,
+                "backend": used,
+                "source": source,
+                "github": github_out,
+                "why": why,
+                "signals": {
+                    "hardware": bool(signals.get("hardware")),
+                    "tags": [str(t) for t in (signals.get("tags") or [])[:8]],
+                },
+                "tracks": tracks_out,
+            }
+        )
 
     def _score_like_ask(
         self,
@@ -700,14 +869,14 @@ class Engine:
                 and baseline_clf is not None
             ):
                 prob = float(prob) + (float(clf_prob) - float(baseline_clf))
-        return float(max(0.0, min(1.0, prob)))
+        return finite_unit(prob)
 
     def _embed_document(self, document: str) -> tuple[np.ndarray | None, dict[str, float]]:
         embed_vec = None
         point = {"x": 0.0, "y": 0.0}
-        if self.openai_ok and self.embeddings is not None:
+        if self._openai_configured() and self.embeddings is not None:
             try:
-                embed_vec = self._openai_embed(document, timeout=10.0)
+                embed_vec = self._openai_embed(document, timeout=6.0)
                 xy = self._openai_point(embed_vec)
                 if xy is None and self.fallback_pca is not None:
                     _, xy = self._tfidf_neighbours(document)
@@ -722,15 +891,20 @@ class Engine:
                 embed_vec = self.vectorizer.transform([document]).toarray()[0]
         return embed_vec, point
 
-    def _openai_embed_batch(self, texts: list[str], timeout: float = 10.0) -> list[np.ndarray]:
+    def _openai_embed_batch(self, texts: list[str], timeout: float = 6.0) -> list[np.ndarray]:
+        key = (os.getenv("OPENAI_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY unset")
         from openai import OpenAI
 
-        kwargs = {"api_key": os.getenv("OPENAI_API_KEY"), "timeout": timeout}
+        kwargs = {"api_key": key, "timeout": timeout, "max_retries": 0}
         base = (os.getenv("OPENAI_BASE_URL") or "").strip()
         if base:
             kwargs["base_url"] = base
         client = OpenAI(**kwargs)
-        resp = client.embeddings.create(model="text-embedding-3-small", input=texts)
+        resp = client.embeddings.create(
+            model="text-embedding-3-small", input=[t[:8000] for t in texts]
+        )
         items = sorted(resp.data, key=lambda d: getattr(d, "index", 0))
         return [np.array(item.embedding, dtype=np.float32) for item in items]
 
@@ -795,25 +969,42 @@ class Engine:
         }
         # 1.5-flash is retired; this key is a new-user key so 2.5-flash 404s too.
         last_err: Exception | None = None
-        with httpx.Client(timeout=20.0) as client:
+        base = (
+            os.getenv("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta"
+        ).rstrip("/")
+        deadline = time.monotonic() + 8.0
+        with httpx.Client(timeout=8.0) as client:
             for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
-                url = (
-                    "https://generativelanguage.googleapis.com/v1beta/models/"
-                    f"{model}:generateContent"
-                )
-                r = client.post(url, params={"key": key}, json=payload)
+                remaining = deadline - time.monotonic()
+                if remaining < 0.4:
+                    break
+                url = f"{base}/models/{model}:generateContent"
+                try:
+                    r = client.post(url, params={"key": key}, json=payload, timeout=remaining)
+                except Exception as exc:
+                    last_err = exc
+                    break
                 if r.status_code >= 400:
                     last_err = RuntimeError(f"{model} {r.status_code}")
                     continue
-                body = r.json()
+                try:
+                    body = r.json()
+                except Exception as exc:
+                    last_err = RuntimeError(f"{model} invalid json: {exc}")
+                    continue
                 parts = (
                     (((body.get("candidates") or [{}])[0].get("content") or {}).get("parts"))
                     or []
                 )
                 raw = "".join(str(p.get("text") or "") for p in parts).strip()
-                if raw:
+                if not raw:
+                    last_err = RuntimeError(f"{model} empty")
+                    continue
+                try:
                     return _parse_coach_moves(raw)
-                last_err = RuntimeError(f"{model} empty")
+                except Exception as exc:
+                    last_err = RuntimeError(f"{model} unusable payload: {exc}")
+                    continue
         raise last_err or RuntimeError("Gemini returned empty")
 
     def coach(self, idea: str, time_budget_hours: float | None = None) -> dict[str, Any]:
@@ -828,7 +1019,7 @@ class Engine:
         signals = parse_signals(document, None)
         gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
         embed_vec = None
-        if gemini_key or (self.openai_ok and len(self.projects) >= 80):
+        if gemini_key or (self._openai_configured() and len(self.projects) >= 80):
             embed_vec, _point = self._embed_document(document)
         elif self.model_blob and self.model_blob.get("embed_space") == "tfidf":
             assert self.vectorizer is not None
@@ -836,10 +1027,10 @@ class Engine:
         baseline_clf, _ = self._probability(embed_vec, signals)
         baseline = self._score_like_ask(embed_vec, signals)
         out: dict[str, Any] = {
-            "baseline": round(float(baseline), 4),
+            "baseline": round(finite_unit(baseline), 4),
             "moves": [],
-            "hours_remaining": remaining,
-            "time_budget_hours": budget,
+            "hours_remaining": float(remaining),
+            "time_budget_hours": float(budget),
         }
         from prizes import filter_coach_moves, load_prize_tracks, prize_prompt_names
 
@@ -848,16 +1039,16 @@ class Engine:
             specs = self._gemini_coach_moves(document, prize_names=prize_prompt_names(tracks))
         except Exception as exc:
             print(f"coach gemini skipped ({exc})")
-            return out
+            return json_safe(out)
         specs = filter_coach_moves(specs, tracks=tracks, projects=self.projects)[:4]
         if not specs:
-            return out
+            return json_safe(out)
         texts = [s["reframed_description"] for s in specs]
         try:
             vectors = self._openai_embed_batch(texts)
         except Exception as exc:
             print(f"coach embed skipped ({exc})")
-            return out
+            return json_safe(out)
         moves = []
         for spec, vec in zip(specs, vectors):
             feats = spec.get("features") or {}
@@ -890,21 +1081,26 @@ class Engine:
             if xy is None:
                 xy = np.array([0.0, 0.0])
             delta = float(new_prob) - float(baseline)
+            if delta != delta or abs(delta) == float("inf"):
+                delta = 0.0
+            delta = max(-1.0, min(1.0, delta))
             effort = float(spec.get("effort_hours") or 4.0)
+            if effort != effort or effort < 0:
+                effort = 4.0
             moves.append(
                 {
                     "label": spec["label"],
                     "rationale": spec["rationale"],
-                    "new_prob": round(float(new_prob), 4),
+                    "new_prob": round(finite_unit(new_prob), 4),
                     "delta": round(delta, 4),
                     "new_point": {"x": float(xy[0]), "y": float(xy[1])},
-                    "effort_hours": effort,
-                    "feasible": effort <= budget,
+                    "effort_hours": round(float(effort), 2),
+                    "feasible": bool(effort <= budget),
                 }
             )
         moves.sort(key=lambda m: -m["delta"])
         out["moves"] = moves
-        return out
+        return json_safe(out)
 
 
 def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
@@ -958,7 +1154,7 @@ def hours_until_build_end(
     now: datetime | None = None, path: Path | None = None
 ) -> float:
     """Hours left until data/event.json build_end. Never negative. File only."""
-    src = path or EVENT_PATH
+    src = path or event_path()
     try:
         raw = json.loads(src.read_text(encoding="utf-8"))
         end = datetime.fromisoformat(str(raw.get("build_end") or ""))
