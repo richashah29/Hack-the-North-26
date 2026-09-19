@@ -11,6 +11,7 @@ used in sample.json, so neither lane blocks the other.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,21 @@ SAMPLE_PATH = "data/sample.json"
 CORPUS_PATH = "data/corpus.parquet"
 DEFAULT_PARQUET = ROOT / CORPUS_PATH
 _APP_SAMPLE = ROOT / "sample.json"
+
+
+def _resolve(p: str | Path) -> Path:
+    """Absolute paths win; relative ones hang off the repo root, not the cwd."""
+    p = Path(p).expanduser()
+    return p if p.is_absolute() else ROOT / p
+
+
+def corpus_path() -> Path:
+    """Where the corpus lives. CORPUS_PATH in .env overrides the default.
+
+    Read lazily on purpose: server.py does `from schema import ROOT` before it
+    calls load_dotenv(), so anything resolved at import time would miss the .env.
+    """
+    return _resolve(os.environ.get("CORPUS_PATH") or CORPUS_PATH)
 
 SECTION_KEYS = (
     ("inspiration", "sec_inspiration"),
@@ -191,9 +207,9 @@ def project_from_row(row: dict[str, Any]) -> Project:
     )
 
 
-def load_corpus(path: str | Path = DEFAULT_PARQUET) -> list[Project]:
+def load_corpus(path: str | Path | None = None) -> list[Project]:
     """Falls back to sample.json when the parquet isn't there yet."""
-    parquet = Path(path)
+    parquet = _resolve(path) if path is not None else corpus_path()
     if parquet.exists():
         import pandas as pd
 
@@ -212,8 +228,8 @@ def load_corpus(path: str | Path = DEFAULT_PARQUET) -> list[Project]:
     )
 
 
-def corpus_source(path: str | Path = DEFAULT_PARQUET) -> str:
-    parquet = Path(path)
+def corpus_source(path: str | Path | None = None) -> str:
+    parquet = _resolve(path) if path is not None else corpus_path()
     if parquet.exists():
         return str(parquet)
     if _APP_SAMPLE.exists():
