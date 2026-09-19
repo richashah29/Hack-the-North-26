@@ -7,5 +7,6 @@ raw/
 data/emb_cache.json
 data/*.npy
 data/model.pkl
+data/phase_*.log
 *.egg-info/
 .sentry-native/
