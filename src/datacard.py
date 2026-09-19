@@ -8,50 +8,83 @@ from fetch import ROOT
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-TEMPLATE = """# Hack the North, 2014-2025
+TEMPLATE = """# The dataset
 
-{n_projects:,} project submissions across {n_years} years of Hack the North, with
-{n_finalists} finalist labels. Assembled {date} from Devpost's public project
-galleries and museum.hackthenorth.com.
+{n_projects:,} Hack the North projects, {n_years} years, {n_finalists} of them finalists.
 
-As far as we know nobody has put this together before. Devpost gives you one
-hackathon at a time; the museum gives you the winners without the field they beat.
-The interesting object is the pair.
+Devpost has every project ever submitted, but only one hackathon at a time. The
+Hack the North museum has the finalists, but not the hundreds of projects they
+beat. Neither is that useful alone. Put them together and you can finally ask the
+obvious question: what did people build, and what actually won?
 
-## Provenance
+## How we got it
 
-| | |
-|---|---|
-| Projects | Devpost galleries, `hackthenorth{{year}}.devpost.com/project-gallery` |
-| Finalist labels | `museum.hackthenorth.com` ({n_museum} slugs) cross-checked against Devpost prize text |
-| Join key | Devpost `slug`, exact - no fuzzy matching |
-| Label agreement | {agree_pct:.1f}% of finalists confirmed by both sources |
-| Crawl | ~0.7s/request, single-threaded, cached. `robots.txt` permits it |
+Every year of HTN has its own Devpost site, and they're all named the same way -
+`hackthenorth2019.devpost.com`, `hackthenorth2024.devpost.com`, and so on. 2014 is
+just `hackthenorth.devpost.com`, because it was the first one and nobody knew there
+would be more.
 
-## Coverage
+Two passes:
+
+**1. Walk the galleries.** Each year's project gallery is paginated, 24 projects to
+a page. We keep asking for the next page until one comes back with nothing new on
+it. That gives us a pile of slugs, the `chessmate-nwygvq` bit on the end of a
+Devpost URL.
+
+**2. Go get every project page.** All {n_projects:,} of them, one at a time, half a
+second apart so we're not hammering anyone's server. We checked `robots.txt` first
+and it's fine with this.
+
+Everything we fetch gets written to disk immediately. That sounds like a boring
+detail but it's the only reason this worked at all. Our parser was wrong about four
+separate things before it was right, and each fix cost us a re-parse of files we
+already had instead of an hour of re-downloading.
+
+Once the HTML is on disk we pull each writeup apart: title, tagline, the Devpost
+prompt sections (Inspiration, What it does, Challenges I ran into...), the tech
+tags, how many people were on the team, whether there's a demo video, whether
+anyone linked a repo.
+
+## How we know who won
+
+The museum lists all {n_museum} finalists, and its URLs use the exact same slugs
+Devpost does. So the join is exact. No fuzzy-matching on project titles, no
+hand-fixing the ones that almost match. Every finalist in the museum found its row
+in our data, all {n_museum} of them.
+
+Devpost also prints prizes on the project page itself, which gets us a second
+opinion for free. The two sources agree on {agree_pct:.0f}% of finalists. The
+disagreements are all in the early years: in 2014 there were no named prize tracks,
+so every award just reads "Winner" and the museum is the only thing that knows what
+being a finalist meant. Worth noting Devpost never once claimed a finalist the
+museum didn't have, so the two never actually contradict each other.
+
+## What it looks like
+
+One row per project.
 
 {coverage}
 
-2026 is absent on purpose: its gallery was still empty while HTN 2026 was being
-judged. That is the population a judge's query represents - an unlabelled project
-being compared against everything that came before.
+A couple of things jump out of that table. Writeups have got a lot longer - 131
+words in 2014, 465 in 2025. And look at the video column in 2020 and 2021: 72%,
+against 15% the year before. Those were the virtual years, when a demo video was
+the only way anyone was going to see your project work.
 
-## Columns
+Here's every column:
 
 {columns}
 
-## Known limits
+## Things to know before you trust a number
 
-- `team_size` counts Devpost profiles listed on the submission, which undercounts
-  teams where someone never joined the Devpost entry.
-- `has_repo` is any `github.com` link on the page, which includes links to
-  libraries used rather than the team's own repo.
-- Finalist counts are higher in 2020 ({n2020}) and 2021 ({n2021}); those were the
-  virtual years and HTN recognised more projects. Not a join error.
-- Prize tracks in 2014 were unnamed - every award reads "Winner" - so 2014
-  finalist labels rest on the museum alone.
-- `description` is the writeup only. The tag list and link nav are stripped, so
-  two projects sharing a stack are not textually similar for that reason.
+- `team_size` counts people listed on the Devpost submission. If someone on your
+  team never joined the entry, they're invisible to us.
+- `has_repo` means a `github.com` link appears somewhere on the page. Sometimes
+  that's the team's repo, sometimes it's a library they used.
+- 2020 and 2021 have more finalists than usual ({n2020} and {n2021}). Those were
+  the virtual years and HTN recognised more projects. It's not a broken join.
+- 2014's labels rest on the museum alone, for the unnamed-prize-track reason above.
+- `description` is the writeup only. We strip the tag list and the link nav out of
+  it, so two projects don't look similar just because they both used React.
 """
 
 
