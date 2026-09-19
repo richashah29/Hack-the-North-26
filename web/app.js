@@ -642,7 +642,7 @@
       label.textContent = b.label;
       svg.appendChild(label);
       const val = svgEl("text", { x: x + bw * 0.28, y: y - 6, "text-anchor": "middle", class: "chart-axis" });
-      val.textContent = `${Math.round(b.value * 100)}%`;
+      val.textContent = `${(Number(b.value) * 100).toFixed(1)}%`;
       svg.appendChild(val);
     });
     return svg;
@@ -656,7 +656,14 @@
     const max = Math.max(0.01, ...values);
     const xOf = (year) => 30 + ((year - years[0]) / (years[years.length - 1] - years[0] || 1)) * 350;
     const yOf = (v) => 180 - (v / max) * 150;
-    const classes = ["chart-line", "chart-line chart-line-2", "chart-line chart-line-3"];
+    const classes = [
+      "chart-line",
+      "chart-line chart-line-2",
+      "chart-line chart-line-3",
+      "chart-line chart-line-4",
+      "chart-line chart-line-5",
+      "chart-line chart-line-6",
+    ];
     series.forEach((s, i) => {
       const d = s.points
         .sort((a, b) => a.year - b.year)
@@ -684,7 +691,12 @@
     if (chart.kind === "lines" && chart.series) {
       const key = document.createElement("div");
       key.className = "chart-key";
-      key.textContent = chart.series.map((s) => s.label).join("   ·   ");
+      chart.series.forEach((s, i) => {
+        const item = document.createElement("span");
+        item.className = `chart-key-item chart-key-${(i % 6) + 1}`;
+        item.textContent = s.label;
+        key.appendChild(item);
+      });
       box.appendChild(key);
     }
     chartsEl.appendChild(box);
