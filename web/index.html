@@ -4,7 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Prior Art</title>
-  <link rel="stylesheet" href="/web/style.css?v=13" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/web/style.css?v=28" />
 </head>
 <body>
   <header class="top">
@@ -32,6 +35,11 @@
           <button type="submit" id="ask-btn">Place it</button>
           <p class="ask-status" id="ask-status" hidden></p>
         </form>
+
+        <section class="twins" id="twins" hidden>
+          <article class="twin twin-win" id="twin-win"></article>
+          <article class="twin twin-lose" id="twin-lose"></article>
+        </section>
 
         <section class="neighbours" id="neighbours">
           <h2>Nearest neighbours</h2>
@@ -70,19 +78,39 @@
       </section>
 
       <section class="prob" id="prob-panel" hidden>
-        <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
         <div class="prob-num" id="prob-num">—</div>
         <div class="prob-label">finalist probability</div>
+        <div class="prob-caveat" id="prob-caveat"></div>
         <div class="prob-meta" id="prob-meta"></div>
+        <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
       </section>
     </aside>
 
     <section class="stage">
       <canvas id="map"></canvas>
+      <div class="year-hud" id="year-hud">
+        <div class="year-hud-num" id="year-hud-num">2014–2025</div>
+        <div class="year-hud-sub" id="year-hud-sub"></div>
+      </div>
+      <div class="zoom" id="zoom">
+        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+        <button type="button" id="zoom-reset" aria-label="Fit map">Fit</button>
+        <span class="zoom-level" id="zoom-level">1×</span>
+      </div>
       <div class="legend">
-        <span><i class="swatch mute"></i> submission</span>
+        <span><i class="swatch mute"></i> didn’t final</span>
         <span><i class="swatch accent"></i> finalist</span>
-        <span><i class="swatch you"></i> you</span>
+        <span><i class="swatch you"></i> your idea</span>
+      </div>
+      <div class="scrubber" id="scrubber">
+        <button type="button" id="scrub-play" class="scrub-play" aria-label="Play years">Play</button>
+        <input id="scrub-year" type="range" min="2014" max="2025" value="2025" aria-label="Year" />
+        <div class="scrub-meta">
+          <span class="scrub-year" id="scrub-year-label">All years</span>
+          <span class="scrub-count" id="scrub-finalists"></span>
+        </div>
+        <button type="button" id="scrub-all" class="scrub-all">Show all years</button>
       </div>
       <div id="tooltip" class="tooltip" hidden></div>
     </section>
@@ -93,6 +121,6 @@
     <div id="charts" class="charts"></div>
   </main>
 
-  <script src="/web/app.js?v=10"></script>
+  <script src="/web/app.js?v=27"></script>
 </body>
 </html>
