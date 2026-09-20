@@ -123,7 +123,7 @@ def _claim(years: list[int], probs: list[float]) -> str:
     return "AI-likelihood of project writeups by year"
 
 
-def _write_findings(years: list[int], probs: list[float], ns: list[int]) -> None:
+def _write_findings(years: list[int], probs: list[float], ns: list[int], shares: list[float] | None = None) -> None:
     findings: dict = {}
     if FINDINGS_PATH.exists():
         try:
@@ -135,6 +135,7 @@ def _write_findings(years: list[int], probs: list[float], ns: list[int]) -> None
         "years": years,
         "ai_prob": probs,
         "n": ns,
+        "share_ge_50": shares or [],
         "claim": _claim(years, probs),
         "field": _FIELD_USED,
     }
@@ -163,6 +164,7 @@ def main() -> int:
     years_out: list[int] = []
     probs_out: list[float] = []
     n_out: list[int] = []
+    shares_out: list[float] = []
     printed_raw = False
 
     with httpx.Client(follow_redirects=True) as client:
@@ -201,10 +203,12 @@ def main() -> int:
                 print(f"{year}: 0 scores")
                 continue
             mean = sum(scores) / len(scores)
+            share = sum(1 for s in scores if s >= 0.5) / len(scores)
             years_out.append(year)
             probs_out.append(round(mean, 4))
             n_out.append(len(scores))
-            print(f"{year}: mean={mean:.3f}  n={len(scores)}  fetched={fetched}")
+            shares_out.append(round(share, 4))
+            print(f"{year}: mean={mean:.3f}  share>=0.5={share:.3f}  n={len(scores)}  fetched={fetched}")
 
     if _FIELD_USED:
         print(f"AI-likelihood field used: {_FIELD_USED}")
@@ -215,7 +219,7 @@ def main() -> int:
         print("no year aggregates to write")
         return 1
 
-    _write_findings(years_out, probs_out, n_out)
+    _write_findings(years_out, probs_out, n_out, shares_out)
     print(f"wrote year-level ai_writing -> {FINDINGS_PATH}")
     return 0
 

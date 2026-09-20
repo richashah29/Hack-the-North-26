@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+import numpy as np
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from schema import ROOT
 
@@ -235,7 +237,66 @@ GENERIC_NEEDLE = STOP | {
     "signal",
     "noise",
     "north",
+    "data",
+    "database",
+    "platform",
+    "service",
+    "services",
+    "sdk",
+    "model",
+    "models",
+    "app",
+    "apps",
+    "web",
+    "code",
+    "open",
+    "source",
+    "key",
+    "keys",
+    "kit",
+    "stack",
+    "time",
+    "series",
 }
+# Closed challenges: do not recommend just because the idea is "hardware" or "AI".
+# Needles must appear in the team's idea/repo, not only in the prize title.
+PLATFORM_REQUIRES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("whiteout", "dominion dynamics"),
+        (
+            "whiteout",
+            "ardupilot",
+            "mavlink",
+            "drone",
+            "quadcopter",
+            "uav",
+            "rover",
+            "aircraft",
+            "swarm",
+            "fixed-wing",
+        ),
+    ),
+    (("bracket bot", "bracketbot"), ("bracket bot", "bracketbot")),
+    (("lelamp", "le lamp", "human computer lab"), ("lelamp", "le lamp")),
+    (("qnx",), ("qnx",)),
+    (("dryft",), ("dryft", "triton", "h100", "kernel fusion")),
+    (("log & order",), ("traffic log", "pcap", "siem", "threat detection")),
+    (("signal in the noise",), ("rbc", "earnings", "canadian market")),
+    (
+        ("quoting interface", "intact"),
+        ("insurance", "quoting", "tenant insurance", "car insurance"),
+    ),
+    (
+        ("federato",),
+        ("underwriting", "insurance", "appetite guideline", "federato"),
+    ),
+    (("tether", "qvac"), ("qvac", "hello-pear", "pear runtime")),
+    (
+        ("tiger data", "tigerdata", "timescale"),
+        ("tiger data", "tigerdata", "timescaledb", "timescale", "hypertable"),
+    ),
+)
+
 BRAND_ALIASES = {
     "sentry": ("sentry", "sentry_sdk", "@sentry"),
     "openai": ("openai", "codex"),
@@ -266,6 +327,7 @@ BRAND_ALIASES = {
     "thru": ("thru",),
     "tether": ("tether", "qvac", "pear"),
     "ardupilot": ("ardupilot", "mavlink", "whiteout"),
+    "tiger": ("tiger data", "tigerdata", "timescale", "timescaledb"),
 }
 
 _WIN_RE = re.compile(
@@ -392,6 +454,8 @@ def load_prize_tracks(path: Path | None = None) -> list[dict[str, str]]:
             name = row.strip()
             sponsor = name.split(":", 1)[0].strip() if ":" in name else ""
             aliases: list[str] = []
+            blurb = ""
+            requires: list[str] = []
         elif isinstance(row, dict):
             name = str(row.get("name") or "").strip()
             sponsor = str(row.get("sponsor") or "").strip()
@@ -399,19 +463,111 @@ def load_prize_tracks(path: Path | None = None) -> list[dict[str, str]]:
             aliases = [str(a).strip() for a in raw_aliases if str(a).strip()]
             if not sponsor and ":" in name:
                 sponsor = name.split(":", 1)[0].strip()
+            blurb = str(row.get("blurb") or row.get("description") or "").strip()
+            raw_req = row.get("requires") or []
+            requires = [str(x).strip().lower() for x in raw_req if str(x).strip()]
         else:
             continue
         key = name.lower()
         if not name or key in seen or "finalist" in key:
             continue
         seen.add(key)
-        out.append({"name": name, "sponsor": sponsor, "aliases": aliases})
+        out.append(
+            {
+                "name": name,
+                "sponsor": sponsor,
+                "aliases": aliases,
+                "blurb": blurb,
+                "description": blurb,
+                "requires": requires,
+            }
+        )
     return out
 
 
 def prize_prompt_names(tracks: list[dict[str, str]] | None = None) -> list[str]:
     tracks = tracks if tracks is not None else load_prize_tracks()
     return [t["name"] for t in tracks if t.get("name")]
+
+
+def prize_prompt_lines(tracks: list[dict[str, str]] | None = None) -> list[str]:
+    """Allowlist plus one-line what the challenge actually is."""
+    tracks = tracks if tracks is not None else load_prize_tracks()
+    lines: list[str] = []
+    for t in tracks:
+        name = (t.get("name") or "").strip()
+        if not name:
+            continue
+        blurb = (t.get("blurb") or t.get("description") or "").strip()
+        if len(blurb) > 160:
+            blurb = blurb[:157].rstrip() + "…"
+        lines.append(f"- {name}" + (f": {blurb}" if blurb else ""))
+    return lines
+
+
+def track_requires(track: dict[str, str] | None) -> tuple[str, ...]:
+    if not track:
+        return ()
+    explicit = [str(x).strip().lower() for x in (track.get("requires") or []) if str(x).strip()]
+    if explicit:
+        return tuple(explicit)
+    blob = " ".join(
+        str(track.get(k) or "")
+        for k in ("name", "sponsor", "blurb", "description")
+    ).lower()
+    for keys, needles in PLATFORM_REQUIRES:
+        if any(k in blob for k in keys):
+            return needles
+    return ()
+
+
+def idea_fits_track(text: str, track: dict[str, str] | None) -> bool:
+    """True if this idea could enter that challenge as written.
+
+    Closed kit/sim challenges need their own needles. 'Best Use of X' tracks
+    need distinctive brand evidence, not a generic word like data or api.
+    """
+    needles = list(track_requires(track))
+    name = (track.get("name") or "") if track else ""
+    desc = (track.get("description") or track.get("blurb") or "") if track else ""
+    brand, extra = _sponsor_needles(name, desc)
+    best_use = "best use of" in name.lower()
+    if best_use or needles:
+        needles = list(dict.fromkeys([*needles, *extra]))
+        if brand and brand.lower() not in GENERIC_NEEDLE:
+            needles = list(dict.fromkeys([*needles, brand.lower()]))
+        if not needles:
+            return False
+        blob = (text or "").lower()
+        return any(_contains_brand(blob, n) for n in needles)
+    if not needles:
+        return True
+    blob = (text or "").lower()
+    return any(_contains_brand(blob, n) for n in needles)
+
+
+def track_mentioned(text: str, track: dict[str, str]) -> bool:
+    blob = (text or "").lower()
+    if not blob:
+        return False
+    name = (track.get("name") or "").strip()
+    sponsor = (track.get("sponsor") or "").strip().lower()
+    if name and name.lower() in blob:
+        return True
+    if ":" in name:
+        right = name.split(":", 1)[1].strip().lower()
+        if len(right) >= 5 and right not in GENERIC_NEEDLE and right in blob:
+            return True
+        left = name.split(":", 1)[0].strip().lower()
+        if len(left) >= 4 and left not in GENERIC_NEEDLE and left in blob:
+            return True
+    if sponsor and len(sponsor) >= 4 and sponsor not in GENERIC_NEEDLE and sponsor in blob:
+        return True
+    for alias in track.get("aliases") or []:
+        a = str(alias).strip().lower()
+        if len(a) >= 4 and a in blob:
+            return True
+    return False
 
 
 def _allowed_prize_index(
@@ -542,6 +698,7 @@ def filter_coach_moves(
     specs: list[dict[str, Any]],
     tracks: list[dict[str, str]] | None = None,
     projects=None,
+    idea: str = "",
 ) -> list[dict[str, Any]]:
     tracks = tracks if tracks is not None else load_prize_tracks()
     kept: list[dict[str, Any]] = []
@@ -553,6 +710,17 @@ def filter_coach_moves(
         reason = coach_move_violation(blob, tracks=tracks, projects=projects)
         if reason:
             print(f"coach dropped move ({reason}): {spec.get('label')}")
+            continue
+        misfit = False
+        for t in tracks:
+            if not track_mentioned(blob, t):
+                continue
+            if idea_fits_track(idea, t):
+                continue
+            print(f"coach dropped misfit prize {t.get('name')}: {spec.get('label')}")
+            misfit = True
+            break
+        if misfit:
             continue
         kept.append(spec)
     return kept
@@ -754,7 +922,7 @@ def _evidence_layers(prompt: str, repo: dict[str, Any] | None) -> dict[str, str]
 def _layer_for(needles: list[str], layers: dict[str, str]) -> str:
     for layer in ("code", "readme", "prompt"):
         blob = layers.get(layer) or ""
-        if any(n and n in blob for n in needles):
+        if any(_contains_brand(blob, n) for n in needles if n):
             return layer
     return "absent"
 
@@ -858,13 +1026,13 @@ def _moves(action: str, brand: str, layer: str, track: dict, past: list, hard: l
     label = brand or track["name"].split(":")[0]
     out: list[str] = []
     if action == "add":
-        out.append(f"Not in the repo. Add a working {label} path — this is a new stream, not a polish.")
+        out.append(f"Not in the repo. Add a working {label} path. This is a new stream, not a polish.")
         if hard:
             out.append(hard[0])
         if past:
             w = past[0]
             out.append(
-                f"{w['title']} ({w['year']}) won {w['prize']} in this family. Same shape; the current stream is {label}."
+                f"{w['title']} ({w['year']}) is a labeled {w['prize']} in this family. Same shape; the current stream is {label}."
             )
     elif action == "strengthen":
         out.append(f"{label} only appears in the {layer}. Put the SDK in a committed file judges can grep.")
@@ -879,6 +1047,208 @@ def _moves(action: str, brand: str, layer: str, track: dict, past: list, hard: l
     return out[:3]
 
 
+_FAMILY_STRIP = re.compile(r"\b(api|sdk|prize|prizes|challenge|best|use|of|the|mlh)\b", re.I)
+
+
+def _contains_brand(blob: str, needle: str) -> bool:
+    needle = (needle or "").lower().strip()
+    if not needle or not blob:
+        return False
+    if any(ch in needle for ch in " .+-"):
+        return needle in blob
+    return re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", blob) is not None
+
+
+def family_key(text: str) -> str:
+    """Canonical prize family: 'gemini', 'elevenlabs', 'mongodb', …"""
+    blob = (text or "").lower()
+    if not blob:
+        return ""
+    for canon, aliases in BRAND_ALIASES.items():
+        if _contains_brand(blob, canon) or any(_contains_brand(blob, a) for a in aliases):
+            return canon
+    m = re.search(r"best use of ([a-z0-9 .+-]+)", blob)
+    if m:
+        chunk = _FAMILY_STRIP.sub(" ", m.group(1))
+        chunk = re.sub(r"[^a-z0-9]+", " ", chunk).strip()
+        if len(chunk) >= 3:
+            return chunk
+    return ""
+
+
+class PrizeMemory:
+    """Labeled prize winners from the pooled corpus — not the HTN map.
+
+    Recurring MLH families (Gemini, ElevenLabs, MongoDB, …) share a key across
+    events so n can be more than one hackathon. Niche sponsor challenges keep
+    their own tiny set. Similarity is cosine on winner writeups, not P(win).
+    """
+
+    def __init__(self) -> None:
+        self.winners: list[dict[str, Any]] = []
+        self.vectorizer: TfidfVectorizer | None = None
+        self.tfidf: Any = None
+        self.family_index: dict[str, list[int]] = {}
+        self.source = ""
+        self.n_events = 0
+
+    @classmethod
+    def load(cls) -> "PrizeMemory":
+        mem = cls()
+        from schema import CORPUS_PATH, MULTI_CORPUS_PATH, ROOT, _as_bool, _as_list
+
+        multi = ROOT / MULTI_CORPUS_PATH
+        htn = ROOT / CORPUS_PATH
+        path = multi if multi.exists() else htn
+        if not path.exists():
+            return mem
+        try:
+            import pandas as pd
+
+            want = [
+                "slug",
+                "year",
+                "title",
+                "tagline",
+                "description",
+                "prizes",
+                "event",
+                "event_id",
+                "won_prize",
+                "built_with",
+            ]
+            df = pd.read_parquet(path)
+            cols = [c for c in want if c in df.columns]
+            df = df[cols]
+        except Exception as exc:
+            print(f"prize pool unread ({exc})")
+            return mem
+        mem.source = str(path)
+        rows: list[dict[str, Any]] = []
+        events: set[str] = set()
+        for raw in df.to_dict(orient="records"):
+            prizes = [str(x) for x in _as_list(raw.get("prizes")) if str(x).strip()]
+            prizes = [p for p in prizes if "finalist" not in p.lower()]
+            if not prizes and not _as_bool(raw.get("won_prize")):
+                continue
+            if not prizes:
+                continue
+            ev = str(raw.get("event") or "")
+            eid = str(raw.get("event_id") or "")
+            if eid:
+                events.add(eid)
+            rows.append(
+                {
+                    "slug": str(raw.get("slug") or ""),
+                    "year": int(raw.get("year") or 0),
+                    "title": str(raw.get("title") or ""),
+                    "tagline": str(raw.get("tagline") or ""),
+                    "description": str(raw.get("description") or "")[:2000],
+                    "prizes": prizes,
+                    "event": ev,
+                    "event_id": eid,
+                    "built_with": [str(x) for x in _as_list(raw.get("built_with"))],
+                    "families": sorted({family_key(p) for p in prizes if family_key(p)}),
+                }
+            )
+        mem.winners = rows
+        mem.n_events = len(events)
+        if not rows:
+            return mem
+        texts = [
+            f"{r['title']}. {r['tagline']}. {r['description']} {' '.join(r['prizes'])}"
+            for r in rows
+        ]
+        mem.vectorizer = TfidfVectorizer(max_features=3000, ngram_range=(1, 2), min_df=1)
+        mem.tfidf = mem.vectorizer.fit_transform(texts)
+        index: dict[str, list[int]] = {}
+        for i, r in enumerate(rows):
+            for fam in r["families"]:
+                index.setdefault(fam, []).append(i)
+        mem.family_index = index
+        print(
+            f"prize pool winners={len(rows)} events={mem.n_events} "
+            f"families={len(index)} from {path.name}"
+        )
+        return mem
+
+    def _indices_for_track(self, track: dict[str, str]) -> tuple[str, list[int], str]:
+        blob = f"{track.get('name') or ''} {track.get('sponsor') or ''} {track.get('blurb') or ''} {track.get('description') or ''}"
+        fam = family_key(blob)
+        if fam and fam in self.family_index:
+            return fam, list(self.family_index[fam]), "family"
+        name = track.get("name") or ""
+        hits: list[int] = []
+        for i, r in enumerate(self.winners):
+            best = 0.0
+            for prize in r["prizes"]:
+                ov = _prize_overlap(name, prize)
+                if ov > best:
+                    best = ov
+            if best >= 0.5:
+                hits.append(i)
+        return fam, hits, "name"
+
+    def likeness(self, track: dict[str, str], query: str) -> dict[str, Any]:
+        fam, idxs, how = self._indices_for_track(track)
+        n = len(idxs)
+        event_ids = {self.winners[i]["event_id"] for i in idxs if self.winners[i].get("event_id")}
+        n_events = len(event_ids)
+        kind = "new"
+        if n >= 1 and n_events >= 2:
+            kind = "recurring"
+        elif n >= 1:
+            kind = "niche"
+        out: dict[str, Any] = {
+            "family": fam,
+            "kind": kind,
+            "n": n,
+            "n_events": n_events,
+            "match": how,
+            "sim": None,
+            "sim_mean": None,
+            "past": [],
+        }
+        if not idxs or self.vectorizer is None or self.tfidf is None:
+            return out
+        q = (query or "").strip() or " "
+        try:
+            qv = self.vectorizer.transform([q])
+            sims = cosine_similarity(qv, self.tfidf[idxs]).ravel()
+        except Exception:
+            return out
+        sims = np.where(np.isfinite(sims), sims, 0.0)
+        order = np.argsort(-sims)
+        out["sim"] = round(float(sims[order[0]]), 4)
+        out["sim_mean"] = round(float(np.mean(sims)), 4)
+        past = []
+        for j in order[:3]:
+            i = idxs[int(j)]
+            r = self.winners[i]
+            best_prize = r["prizes"][0]
+            best_ov = -1.0
+            for prize in r["prizes"]:
+                ov = _prize_overlap(track.get("name") or "", prize)
+                if fam and family_key(prize) == fam:
+                    ov = max(ov, 0.9)
+                if ov > best_ov:
+                    best_ov, best_prize = ov, prize
+            past.append(
+                {
+                    "title": r["title"],
+                    "year": r["year"],
+                    "prize": best_prize,
+                    "event": r["event"],
+                    "event_id": r["event_id"],
+                    "slug": r["slug"],
+                    "sim": round(float(sims[int(j)]), 4),
+                    "tagline": r["tagline"],
+                }
+            )
+        out["past"] = past
+        return out
+
+
 def advise_tracks(
     document: str,
     tracks: list[dict[str, str]],
@@ -888,16 +1258,14 @@ def advise_tracks(
     repo: dict[str, Any] | None = None,
     prompt: str = "",
     signals: dict[str, Any] | None = None,
+    prize_memory: PrizeMemory | None = None,
 ) -> list[dict[str, Any]]:
-    """Per sponsor track: current probability, counterfactual if you ship the SDK, and add vs strengthen.
+    """Rank this year's sponsor tracks against labeled prize winners.
 
-    Action rule (the stream is the sponsor track, not the category):
-      code evidence     → defend (already a stream; deepen the demo)
-      readme/prompt     → strengthen (used weakly)
-      absent + reachable stack → add (new stream)
-      absent + no stack → skip
-    Probability is family winner-rate × how real the integration is. It is not
-    the 12-finalist number and not P(win | submitted) — we only have winners.
+    Action is still evidence (code / README / prompt). The number on the card
+    is cosine likeness to `won_prize` writeups in that prize family — pooled
+    across events for recurring MLH tracks, n=1–few for niche ones. It is not
+    the 12-finalist score and not P(win | submit).
     """
     if not tracks:
         return []
@@ -920,17 +1288,40 @@ def advise_tracks(
         blob = f"{t['name']} {t.get('description') or ''}"
         title_cats = categorize(t["name"], for_track=True)
         track_cats = title_cats | categorize(blob, for_track=True)
-        overlap_cats = title_cats if title_cats else track_cats
+        overlap_cats = title_cats
         brand, needles = _sponsor_needles(t["name"], t.get("description") or "")
         if not needles:
-            needles = sorted(_tokens(t["name"]))[:6]
+            needles = [n for n in sorted(_tokens(t["name"])) if n not in GENERIC_NEEDLE][:6]
         layer = _layer_for(needles, layers)
-        potential = _potential(track_cats, proj_cats, layers, repo)
+        combined_fit = (
+            f"{prompt_text} {document or ''} {layers.get('code') or ''} {layers.get('readme') or ''}"
+        )
+        fits = idea_fits_track(combined_fit, t)
+        mentioned = track_mentioned(prompt_text, t) or track_mentioned(document or "", t)
+        if layer == "absent" and not fits and not mentioned:
+            continue
+        if track_requires(t) and not fits and layer == "absent":
+            continue
+        potential = _potential(title_cats, proj_cats, layers, repo)
         action = _action(layer, potential)
-        family = next(iter(track_cats), None)
-        base, wins, n_fam = family_prize_rate(projects, family)
+        family = next(iter(title_cats), None)
+        like = (
+            prize_memory.likeness(t, document or prompt_text)
+            if prize_memory is not None
+            else {
+                "family": family,
+                "kind": "new",
+                "n": 0,
+                "n_events": 0,
+                "sim": None,
+                "sim_mean": None,
+                "past": [],
+            }
+        )
+        past = list(like.get("past") or [])
+        if prize_memory is None and not past and (proj_cats & track_cats or action != "skip"):
+            past = past_winners(t, projects)
         neighbour = False
-        past = past_winners(t, projects) if (proj_cats & track_cats or action != "skip") else []
         for slug in (neighbour_slugs or [])[:5]:
             p = by_slug.get(slug)
             if not p:
@@ -941,46 +1332,73 @@ def advise_tracks(
             if any(_prize_overlap(t["name"], pr) >= 0.34 for pr in (p.prizes or []) if "finalist" not in pr.lower()):
                 neighbour = True
                 break
-        p_now, p_if = _track_probs(base, layer, potential, neighbour, reachable=action != "skip")
-        if action == "skip" and p_if < 0.08:
+        sim = like.get("sim")
+        n_lab = int(like.get("n") or 0)
+        idea_fam = family_key(f"{prompt_text} {document or ''}")
+        track_fam = like.get("family") or family_key(t.get("name") or "")
+        if action == "skip" and n_lab == 0 and potential < 0.55:
+            continue
+        if action == "skip" and n_lab > 0 and layer == "absent" and potential < 0.55:
+            continue
+        if action == "add" and layer == "absent" and track_fam and track_fam != idea_fam:
+            continue
+        if action == "add" and layer == "absent" and n_lab == 0:
             continue
         hard = _hard_requirements(t.get("description") or "")
-        moves = _moves(action, brand, layer, t, past if action != "skip" else [], hard)
+        show_past = past if action != "skip" or n_lab else []
+        moves = _moves(action, brand, layer, t, show_past, hard)
         why = [
             f"{action}: {layer} evidence"
-            + (f" · family rate {base:.0%} ({wins}/{n_fam})" if n_fam else ""),
+            + (
+                f" · {like.get('kind')} n={n_lab} across {like.get('n_events') or 0} events"
+                if n_lab
+                else " · no labeled winners in the pool"
+            ),
         ]
         if neighbour:
             why.append("nearest neighbour sat in this prize family")
+        sim_n = 0.0 if sim is None else float(sim)
         ranked.append(
             {
                 "name": t["name"],
                 "brand": brand,
-                "fit": p_if,
-                "p_now": p_now,
-                "p_if": p_if,
+                "fit": round(sim_n, 4),
+                "p_now": round(sim_n, 4),
+                "p_if": round(sim_n, 4),
+                "sim": None if sim is None else round(float(sim), 4),
+                "sim_mean": like.get("sim_mean"),
+                "n": n_lab,
+                "n_events": int(like.get("n_events") or 0),
+                "kind": like.get("kind") or "new",
                 "action": action,
                 "layer": layer,
                 "potential": round(potential, 3),
-                "family": family,
-                "family_rate": round(base, 3),
+                "family": like.get("family") or family,
+                "family_rate": round(sim_n, 3),
                 "category": sorted(track_cats),
                 "title_cats": sorted(overlap_cats),
-                "blurb": (t.get("description") or "")[:220],
-                "past": past if action != "skip" else [],
+                "blurb": (t.get("description") or t.get("blurb") or "")[:220],
+                "past": show_past,
                 "moves": moves,
                 "why": why,
                 "needles": needles[:6],
             }
         )
-    ranked.sort(key=lambda row: (0 if row["action"] != "skip" else 1, -row["p_if"], -row["p_now"]))
+    ranked.sort(
+        key=lambda row: (
+            0 if row["action"] != "skip" else 1,
+            -(row["sim"] if row["sim"] is not None else -1),
+            -row["n"],
+        )
+    )
     defend = [row for row in ranked if row["action"] == "defend"]
     strengthen = [row for row in ranked if row["action"] == "strengthen"]
     add = [row for row in ranked if row["action"] == "add" and row["potential"] >= 0.7]
     add.sort(
         key=lambda r: (
             -len(set(r.get("title_cats") or r.get("category") or []) & proj_cats),
-            -r["p_if"],
+            -(r["sim"] if r["sim"] is not None else -1),
+            -r["n"],
         )
     )
     primary = [r for r in add if set(r.get("title_cats") or []) & proj_cats]
@@ -990,8 +1408,8 @@ def advise_tracks(
     picked.sort(
         key=lambda row: (
             {"defend": 0, "strengthen": 1, "add": 2}.get(row["action"], 9),
-            -len(set(row.get("title_cats") or row.get("category") or []) & proj_cats),
-            -row["p_if"],
+            -(row["sim"] if row["sim"] is not None else -1),
+            -row["n"],
         )
     )
     for row in picked[:k]:
@@ -1008,6 +1426,7 @@ def rank_tracks(
     neighbour_slugs: list[str] | None = None,
     repo: dict[str, Any] | None = None,
     prompt: str = "",
+    prize_memory: PrizeMemory | None = None,
     signals: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     return advise_tracks(
@@ -1019,4 +1438,5 @@ def rank_tracks(
         repo=repo,
         prompt=prompt,
         signals=signals,
+        prize_memory=prize_memory,
     )

@@ -164,6 +164,9 @@ class Project:
     has_repo: bool = False
     prizes: list[str] = field(default_factory=list)
     finalist: bool = False
+    won_prize: bool = False
+    event: str = ""
+    event_id: str = ""
 
     def embed_text(self) -> str:
         desc = (self.description or "")[:4000]
@@ -232,6 +235,9 @@ def project_from_row(row: dict[str, Any]) -> Project:
         has_repo=_as_bool(row.get("has_repo")),
         prizes=[str(x) for x in _as_list(row.get("prizes"))],
         finalist=_as_bool(row.get("finalist")),
+        won_prize=_as_bool(row.get("won_prize")),
+        event=str(row.get("event") or ""),
+        event_id=str(row.get("event_id") or ""),
     )
 
 

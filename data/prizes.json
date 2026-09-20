@@ -8,7 +8,8 @@
     },
     {
       "name": "RBC: Signal in the Noise",
-      "sponsor": "RBC"
+      "sponsor": "RBC",
+      "blurb": "Answer RBC's Canadian markets research questions. Not a product-build prize."
     },
     {
       "name": "Shopify: Hack Shopping with AI",
@@ -24,11 +25,13 @@
     },
     {
       "name": "QNX: Create an Embedded System with QNX that Uses AI",
-      "sponsor": "QNX"
+      "sponsor": "QNX",
+      "blurb": "Must run on QNX OS with a QNX open-source AI module. Not generic embedded/hardware."
     },
     {
       "name": "Dryft: Dryft Company Challenge",
-      "sponsor": "Dryft"
+      "sponsor": "Dryft",
+      "blurb": "Speed-up challenge for Dryft's transformer kernels on H100s. Not a product idea prize."
     },
     {
       "name": "Elastic: Find the Signal - Best Use of Elasticsearch",
@@ -44,19 +47,23 @@
     },
     {
       "name": "CSE: Log & Order",
-      "sponsor": "CSE"
+      "sponsor": "CSE",
+      "blurb": "Investigate CSE's traffic logs and build detection on their dataset."
     },
     {
       "name": "Tether: The Best Sovereign App",
-      "sponsor": "Tether"
+      "sponsor": "Tether",
+      "blurb": "Must build on hello-pear-qvac-tui / QVAC. Not a generic app prize."
     },
     {
       "name": "Intact: The Quoting Interface of the Future",
-      "sponsor": "Intact"
+      "sponsor": "Intact",
+      "blurb": "Reimagine car or tenant insurance quoting. Not a generic hardware or cane prize."
     },
     {
       "name": "Dominion Dynamics: WHITEOUT",
-      "sponsor": "Dominion Dynamics"
+      "sponsor": "Dominion Dynamics",
+      "blurb": "ArduPilot/MAVLink Arctic fleet sim: aircraft, quadcopters, rovers tracking a target. Not a walking-aid or generic hardware prize."
     },
     {
       "name": "Expo: Best Mobile Experience Built with Expo",
@@ -64,7 +71,8 @@
     },
     {
       "name": "Bracket Bot: Best Use of Bracket Bot Hardware",
-      "sponsor": "Bracket Bot"
+      "sponsor": "Bracket Bot",
+      "blurb": "Must use Bracket Bot hardware. A cane or custom PCB does not qualify."
     },
     {
       "name": "Sentry: Best Use of Sentry",
@@ -76,7 +84,8 @@
     },
     {
       "name": "Human Computer Lab: Build with LeLamp SDK",
-      "sponsor": "Human Computer Lab"
+      "sponsor": "Human Computer Lab",
+      "blurb": "Must use the LeLamp robot SDK. Not a generic hardware prize."
     },
     {
       "name": "Backboard.io: Built on Backboard",
@@ -120,7 +129,8 @@
     },
     {
       "name": "Federato: Building the Federato Insurance Agent",
-      "sponsor": "Federato"
+      "sponsor": "Federato",
+      "blurb": "Build an insurance underwriting agent on Federato's data. Not a generic agent prize."
     },
     {
       "name": "Browserbase: Best Use of Browserbase",

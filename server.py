@@ -63,9 +63,10 @@ class AskBody(BaseModel):
 
 class CoachBody(BaseModel):
     text: str = Field(default="", max_length=8000)
+    github: str = Field(default="", max_length=400)
     time_budget_hours: float | None = Field(default=None, ge=0, le=168)
 
-    @field_validator("text", mode="before")
+    @field_validator("text", "github", mode="before")
     @classmethod
     def _nuls(cls, v):
         if v is None:
@@ -73,6 +74,26 @@ class CoachBody(BaseModel):
         if not isinstance(v, str):
             return v
         return _clean_text(v)
+
+
+class CoachMoveIn(BaseModel):
+    label: str = Field(default="", max_length=80)
+    rationale: str = Field(default="", max_length=240)
+    reframed_description: str = Field(default="", max_length=4000)
+    effort_hours: float = Field(default=4.0, ge=0, le=168)
+
+    @field_validator("label", "rationale", "reframed_description", mode="before")
+    @classmethod
+    def _nuls(cls, v):
+        if v is None:
+            return ""
+        if not isinstance(v, str):
+            return v
+        return _clean_text(v)
+
+
+class CoachStackBody(CoachBody):
+    moves: list[CoachMoveIn] = Field(default_factory=list, max_length=4)
 
 
 class ChatMessage(BaseModel):
@@ -160,6 +181,11 @@ def index() -> FileResponse:
     return FileResponse(WEB / "index.html")
 
 
+@app.get("/favicon.ico")
+def favicon() -> FileResponse:
+    return FileResponse(WEB / "favicon.ico")
+
+
 @app.get("/api/config")
 def config() -> JSONResponse:
     from engine import engine, json_safe
@@ -172,6 +198,8 @@ def config() -> JSONResponse:
         "n_finalists": sum(1 for p in engine.projects if p.finalist),
         "n_map": len((engine.map_data or {}).get("points") or []),
         "n_embeddings": n_emb,
+        "n_prize_winners": 0 if engine.prize_memory is None else len(engine.prize_memory.winners),
+        "n_prize_events": 0 if engine.prize_memory is None else engine.prize_memory.n_events,
     }
     return JSONResponse(json_safe(payload))
 
@@ -257,7 +285,7 @@ def api_coach(body: CoachBody) -> JSONResponse:
     if not text:
         raise HTTPException(status_code=400, detail="provide a description")
     try:
-        return JSONResponse(json_safe(engine.coach(text, time_budget_hours=body.time_budget_hours)))
+        return JSONResponse(json_safe(engine.coach(text, time_budget_hours=body.time_budget_hours, github=body.github)))
     except Exception as exc:
         print(f"coach failed ({exc})")
         remaining = hours_until_build_end()
@@ -270,6 +298,59 @@ def api_coach(body: CoachBody) -> JSONResponse:
                     "moves": [],
                     "hours_remaining": remaining,
                     "time_budget_hours": round(max(0.0, budget), 2),
+                }
+            )
+        )
+
+
+@app.post("/api/coach/stack")
+def api_coach_stack(body: CoachStackBody) -> JSONResponse:
+    from engine import engine, hours_until_build_end, json_safe
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="provide a description")
+    specs = [
+        {
+            "label": m.label,
+            "rationale": m.rationale,
+            "reframed_description": m.reframed_description,
+            "effort_hours": m.effort_hours,
+        }
+        for m in (body.moves or [])[:4]
+    ]
+    try:
+        return JSONResponse(
+            json_safe(
+                engine.coach_stack(
+                    text,
+                    specs,
+                    github=body.github,
+                    time_budget_hours=body.time_budget_hours,
+                )
+            )
+        )
+    except Exception as exc:
+        print(f"coach stack failed ({exc})")
+        remaining = hours_until_build_end()
+        budget = remaining if body.time_budget_hours is None else float(body.time_budget_hours)
+        return JSONResponse(
+            json_safe(
+                {
+                    "baseline": 0.0,
+                    "baseline_score": 0,
+                    "labels": [m.label for m in (body.moves or [])[:4]],
+                    "label": "",
+                    "new_prob": 0.0,
+                    "delta": 0.0,
+                    "new_score": 0,
+                    "score_delta": 0,
+                    "new_point": {"x": 0.0, "y": 0.0},
+                    "effort_hours": 0.0,
+                    "feasible": True,
+                    "hours_remaining": remaining,
+                    "time_budget_hours": round(max(0.0, budget), 2),
+                    "degraded": True,
                 }
             )
         )

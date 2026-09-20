@@ -358,6 +358,18 @@ def score_from_signals(projects: list[Project], signals: dict[str, Any]) -> tupl
                 why.append("stack vs outcome: " + "; ".join(notable[:3]))
             else:
                 why.append("named stack tags are not strongly tied to finalist status here")
+    try:
+        repo_n = 1.0 if isinstance(signals.get("has_repo"), bool) and signals.get("has_repo") else float(signals.get("has_repo") if signals.get("has_repo") is not None else 0.5)
+    except (TypeError, ValueError):
+        repo_n = 0.5
+    if repo_n >= 0.99:
+        repo_rate = _group_rate(projects, lambda p: p.has_repo)
+        if repo_rate is not None and repo_rate > rate:
+            rate = 0.7 * rate + 0.3 * repo_rate
+    elif repo_n <= 0.01:
+        no_repo_rate = _group_rate(projects, lambda p: not p.has_repo)
+        if no_repo_rate is not None and no_repo_rate < rate:
+            rate = 0.7 * rate + 0.3 * no_repo_rate
     why.append("neighbours are context only — similarity is not the score")
     return float(max(0.03, min(0.55, rate))), why
 
@@ -413,6 +425,7 @@ class Engine:
         # UMAP/numba transform is not thread-safe; FastAPI runs sync routes
         # on a threadpool so two simultaneous /api/ask calls can kill the worker.
         self._umap_lock = threading.Lock()
+        self.prize_memory = None
 
     def _openai_configured(self) -> bool:
         return bool((os.getenv("OPENAI_API_KEY") or "").strip())
@@ -425,6 +438,9 @@ class Engine:
         self.by_slug = {p.slug: p for p in self.projects}
         self._require_prizes_file()
         self._require_event_file()
+        from prizes import PrizeMemory
+
+        self.prize_memory = PrizeMemory.load()
         self._fit_fallback()
         self._load_embeddings()
         self._load_map()
@@ -440,7 +456,8 @@ class Engine:
         n = len(self.projects)
         n_emb = 0 if self.embeddings is None else int(self.embeddings.shape[0])
         n_map = len((self.map_data or {}).get("points") or [])
-        print(f"loaded corpus={n} embeddings={n_emb} map={n_map} p_ref={int(self.p_ref.size)}")
+        n_pool = 0 if not self.prize_memory else len(self.prize_memory.winners)
+        print(f"loaded corpus={n} embeddings={n_emb} map={n_map} p_ref={int(self.p_ref.size)} prize_winners={n_pool}")
 
     def _fit_fallback(self) -> None:
         texts = [p.embed_text() for p in self.projects]
@@ -742,6 +759,32 @@ class Engine:
         order = np.argsort(-sims)[:k]
         return [(self.projects[i].slug, float(sims[i])) for i in order]
 
+    def _cosine_for_slugs(
+        self, vec: np.ndarray | None, pairs: list[tuple[str, float]]
+    ) -> list[tuple[str, float]]:
+        """Keep Elasticsearch ranking; attach cosine for display.
+
+        Hybrid RRF scores are 1/(60+rank) so every neighbour looks like 0.016.
+        """
+        if vec is None or not pairs or self.embeddings_norm is None:
+            return pairs
+        a = np.asarray(vec, dtype=np.float32).reshape(-1)
+        if a.size != int(self.embeddings_norm.shape[1]):
+            return pairs
+        a = a / (np.linalg.norm(a) + 1e-9)
+        index = {p.slug: i for i, p in enumerate(self.projects)}
+        out: list[tuple[str, float]] = []
+        for slug, fallback in pairs:
+            i = index.get(slug)
+            if i is None:
+                out.append((slug, float(fallback)))
+                continue
+            sim = float(self.embeddings_norm[i] @ a)
+            if sim != sim:
+                sim = float(fallback)
+            out.append((slug, sim))
+        return out
+
     def search(self, text: str, k: int = 400, min_sim: float = 0.2) -> dict[str, Any]:
         """Cosine overlay. OpenAI space when embeddings.npy exists; else TF-IDF."""
         empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
@@ -837,10 +880,10 @@ class Engine:
                 titles.append(proj.title.strip())
         if not hits:
             lines.append("- none retrieved")
-        from prizes import prize_prompt_names
+        from prizes import prize_prompt_lines, prize_prompt_names
 
         prize_names = prize_prompt_names()
-        lines.extend(["", self._static_facts_block(), "", self._prize_block(prize_names), "", self._event_block()])
+        lines.extend(["", self._static_facts_block(), "", self._prize_block(prize_prompt_lines()), "", self._event_block()])
         return {
             "text": "\n".join(lines)[:12000],
             "titles": titles,
@@ -930,8 +973,15 @@ class Engine:
     def _prize_block(self, names: list[str]) -> str:
         if not names:
             return "ALLOWED 2026 PRIZES: none. Do not name any prize, track, or award."
-        return "ALLOWED 2026 PRIZES (copy exactly or do not name one):\n" + "\n".join(
-            f"- {n}" for n in names
+        body = "\n".join(
+            n if str(n).startswith("- ") else f"- {n}" for n in names
+        )
+        return (
+            "ALLOWED 2026 PRIZES (copy the name exactly or do not name one). "
+            "The blurb is what the challenge actually is. "
+            "Only mention a prize if the idea as written could enter that exact challenge. "
+            "WHITEOUT, Bracket Bot, LeLamp, and QNX are not generic hardware prizes.\n"
+            + body
         )
 
     def _event_block(self) -> str:
@@ -1178,6 +1228,7 @@ class Engine:
         else:
             try:
                 pairs = self.es_neighbours(embed_vec, document, k=5)
+                pairs = self._cosine_for_slugs(embed_vec, pairs)
                 source = "elastic"
                 print("neighbours source=elastic")
             except Exception as exc:
@@ -1201,41 +1252,57 @@ class Engine:
             model_meta = {**model_meta, "auc": None, "auc_spread": []}
 
         tracks_out = None
-        if (devpost or "").strip():
-            from prizes import fetch_tracks, advise_tracks
+        try:
+            from prizes import advise_tracks, fetch_tracks, load_prize_tracks
 
-            fetched = fetch_tracks(devpost, timeout=6.0)
-            if fetched.get("ok"):
-                ranked = advise_tracks(
-                    document,
-                    fetched["tracks"],
-                    self.projects,
-                    neighbour_slugs=[slug for slug, _ in pairs],
-                    repo=repo if repo and repo.get("ok") else None,
-                    prompt=prompt,
-                    signals=signals,
-                )
-                tracks_out = {
-                    "ok": True,
-                    "url": fetched.get("url"),
-                    "n": len(fetched["tracks"]),
-                    "ranked": ranked,
-                    "method": (
-                        "Each % is this prize family in the corpus, gated on whether "
-                        "the sponsor SDK is in code / README / prompt. The big number "
-                        "is still the 12 finalists. p_if is the same track if you ship "
-                        "the integration — we have winners, not losers, so this is likeness, not P(win|submit)."
-                    ),
-                    "error": None,
-                }
-            else:
-                tracks_out = {
-                    "ok": False,
-                    "url": fetched.get("url"),
-                    "n": 0,
-                    "ranked": [],
-                    "error": fetched.get("error") or "could not load prize tracks",
-                }
+            tracks = [dict(t) for t in load_prize_tracks()]
+            fetched_url = None
+            if (devpost or "").strip():
+                fetched = fetch_tracks(devpost, timeout=6.0)
+                if fetched.get("ok"):
+                    fetched_url = fetched.get("url")
+                    by_name = {
+                        (t.get("name") or "").lower(): t for t in (fetched.get("tracks") or [])
+                    }
+                    for t in tracks:
+                        extra = by_name.get((t.get("name") or "").lower())
+                        if extra and extra.get("description"):
+                            t["description"] = extra["description"]
+            ranked = advise_tracks(
+                document,
+                tracks,
+                self.projects,
+                neighbour_slugs=[slug for slug, _ in pairs],
+                repo=repo if repo and repo.get("ok") else None,
+                prompt=prompt,
+                signals=signals,
+                prize_memory=self.prize_memory,
+            )
+            pool = self.prize_memory
+            tracks_out = {
+                "ok": True,
+                "url": fetched_url,
+                "n": len(tracks),
+                "ranked": ranked,
+                "n_winners": 0 if pool is None else len(pool.winners),
+                "n_events": 0 if pool is None else pool.n_events,
+                "pool_source": "" if pool is None else Path(pool.source).name,
+                "method": (
+                    "Likeness to labeled prize winners, pooled across events "
+                    "for recurring MLH families (Gemini, ElevenLabs, MongoDB). "
+                    "Niche tracks still get a cosine to the few labeled writeups. "
+                    "This is not the 12-finalist score."
+                ),
+                "error": None,
+            }
+        except Exception as exc:
+            tracks_out = {
+                "ok": False,
+                "url": None,
+                "n": 0,
+                "ranked": [],
+                "error": str(exc)[:200] or "could not rank prize tracks",
+            }
 
         github_out = None
         if github.strip():
@@ -1335,7 +1402,14 @@ class Engine:
         items = sorted(resp.data, key=lambda d: getattr(d, "index", 0))
         return [np.array(item.embedding, dtype=np.float32) for item in items]
 
-    def _gemini_raw(self, system: str, user: str) -> str:
+    def _gemini_raw(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_output_tokens: int = 768,
+        timeout: float = 8.0,
+    ) -> str:
         key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
         if not key:
             raise RuntimeError("GEMINI_API_KEY unset")
@@ -1347,14 +1421,16 @@ class Engine:
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
+                "maxOutputTokens": max(256, min(int(max_output_tokens), 2048)),
             },
         }
         last_err: Exception | None = None
         base = (
             os.getenv("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta"
         ).rstrip("/")
-        deadline = time.monotonic() + 8.0
-        with httpx.Client(timeout=8.0, transport=httpx.HTTPTransport(retries=0)) as client:
+        budget = max(4.0, min(float(timeout), 12.0))
+        deadline = time.monotonic() + budget
+        with httpx.Client(timeout=budget, transport=httpx.HTTPTransport(retries=0)) as client:
             for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
                 remaining = deadline - time.monotonic()
                 if remaining < 0.4:
@@ -1390,35 +1466,49 @@ class Engine:
             + " You coach Hack the North teams. Return STRICT JSON only: "
             '{"moves":[{"label":str,"rationale":str,"reframed_description":str,'
             '"effort_hours":number,'
-            '"features":{"hardware":bool,"has_video":bool,"extra_tech_tags":int}}]}. '
+            '"features":{"hardware":bool,"has_video":bool,"has_repo":bool,"extra_tech_tags":int}}]}. '
             "Give three or four distinct moves. rationale is one sentence. "
             "reframed_description is the whole idea rewritten as if that move already shipped. "
             "You only phrase. effort_hours is hours for a four-person team. "
             "Do not decide feasibility. Numbers are forbidden in label, rationale, and "
             "reframed_description. extra_tech_tags and effort_hours live in JSON fields only. "
             "If you mention a past project, copy its title and year from CONTEXT. "
-            "A move does not need a prize. If you mention one, copy it verbatim from CONTEXT."
+            "A move does not need a prize. Prefer a public GitHub, a filmed demo, a physical "
+            "build of the idea they already described, or a named stack. "
+            "If you mention a prize, the current idea must already fit that challenge. "
+            "Do not steer a walking aid, cane, or generic sensor project into WHITEOUT, "
+            "Bracket Bot, LeLamp, QNX, Dryft, CSE logs, Intact insurance, or another "
+            "sponsor's closed challenge."
         )
         user = (
             "CONTEXT:\n"
             f"{(ctx.get('text') or '')[:12000]}\n\n"
             "Idea:\n"
             f"{idea[:2000]}\n\n"
-            "Propose moves such as: ship a physical build, film a live demo, name a real stack, "
-            "or tighten the story toward a judging-day demo. JSON only."
+            "Propose moves such as: ship a physical build of THIS idea, film a live demo, "
+            "put the code on GitHub, name a real stack, or tighten the judging-day story. "
+            "JSON only."
         )
         return _parse_coach_moves(self._gemini_raw(system, user))
 
-    def coach(self, idea: str, time_budget_hours: float | None = None) -> dict[str, Any]:
+    def coach(self, idea: str, time_budget_hours: float | None = None, github: str = "") -> dict[str, Any]:
         """Propose 3–4 moves. Probabilities come from the classifier, never Gemini.
 
         Feasibility is clock math on this process, not a Gemini decision.
         """
-        from github_repo import compose_embed_text
+        from github_repo import compose_embed_text, fetch_repo
 
         remaining, budget = _coach_clock(time_budget_hours)
-        document = compose_embed_text((idea or "").strip(), None) or (idea or "").strip()
-        signals = parse_signals(document, None)
+        prompt = (idea or "").strip()
+        repo = None
+        if (github or "").strip():
+            repo = fetch_repo(github, timeout=5.0)
+            document = compose_embed_text(prompt, repo if repo and repo.get("ok") else None) or prompt
+        else:
+            document = compose_embed_text(prompt, None) or prompt
+        signals = parse_signals(document, repo if repo and repo.get("ok") else None)
+        if (github or "").strip():
+            signals["has_repo"] = 1.0
         gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
         embed_vec = None
         if gemini_key or (self._openai_configured() and len(self.projects) >= 80):
@@ -1445,12 +1535,18 @@ class Engine:
         except Exception as exc:
             print(f"coach gemini skipped ({exc})")
             if _gemini_unavailable(exc):
-                specs = _fallback_coach_specs(document)
+                specs = _fallback_coach_specs(document, signals)
             else:
                 return json_safe(out)
+        if float(signals.get("has_repo") or 0) >= 1.0:
+            specs = [
+                s
+                for s in specs
+                if "github" not in str(s.get("label") or "").lower()
+            ]
         kept = []
         for spec in specs:
-            spec = _enrich_coach_features(spec)
+            spec = _enrich_coach_features(spec, signals)
             drop = False
             for key in ("label", "rationale", "reframed_description"):
                 val, flags = self._ground_validate(str(spec.get(key) or ""), ctx, strip_all_pct=True)
@@ -1461,18 +1557,31 @@ class Engine:
                 print(f"coach dropped ungrounded prize: {spec.get('label')}")
                 continue
             if spec.get("label") and spec.get("reframed_description"):
+                feats = spec.get("features") if isinstance(spec.get("features"), dict) else {}
+                if feats.get("has_video") and signals.get("has_video"):
+                    continue
+                if feats.get("hardware") and signals.get("hardware"):
+                    continue
+                if feats.get("has_repo") and float(signals.get("has_repo") or 0) >= 1.0:
+                    continue
                 kept.append(spec)
-        specs = filter_coach_moves(kept, tracks=tracks, projects=self.projects)[:4]
+        specs = filter_coach_moves(kept, tracks=tracks, projects=self.projects, idea=prompt)[:6]
+        have = {str(s.get("label") or "").lower() for s in specs}
+        if float(signals.get("has_repo") or 0) < 1.0 and not any("github" in h for h in have):
+            for extra_spec in _fallback_coach_specs(document, signals):
+                if "github" in extra_spec["label"].lower():
+                    specs.insert(0, extra_spec)
+                    have.add(extra_spec["label"].lower())
+                    break
         if len(specs) < 2:
-            have = {s.get("label") for s in specs}
-            for extra_spec in _fallback_coach_specs(document):
-                if extra_spec["label"] in have:
+            for extra_spec in _fallback_coach_specs(document, signals):
+                if extra_spec["label"].lower() in have:
                     continue
                 specs.append(extra_spec)
-                have.add(extra_spec["label"])
+                have.add(extra_spec["label"].lower())
                 if len(specs) >= 3:
                     break
-        specs = specs[:4]
+        specs = specs[:6]
         if not specs:
             return json_safe(out)
         texts = [s["reframed_description"] for s in specs]
@@ -1483,62 +1592,172 @@ class Engine:
             return json_safe(out)
         moves = []
         for spec, vec in zip(specs, vectors):
-            feats = spec.get("features") or {}
-            hardware = bool(feats.get("hardware"))
-            has_video = bool(feats.get("has_video"))
-            extra = int(feats.get("extra_tech_tags") or 0)
-            reframed = spec["reframed_description"]
-            move_signals = dict(signals)
-            hinted = parse_signals(reframed)
-            move_signals["hardware"] = hardware or bool(signals.get("hardware")) or bool(hinted.get("hardware"))
-            move_signals["has_video"] = has_video or bool(signals.get("has_video")) or bool(hinted.get("has_video"))
-            move_signals["n_tech"] = float(signals.get("n_tech") or 0) + extra
-            if move_signals["hardware"] and not signals.get("hardware"):
-                move_signals["n_tech"] = float(move_signals["n_tech"]) + 1
-            move_signals["length"] = signals.get("length")
-            move_signals["has_repo"] = signals.get("has_repo")
-            move_signals["team_size"] = signals.get("team_size") or 4
-            struct = query_features(move_signals)
-            # Score the same idea with the move's features. Re-embedding a paraphrase
-            # was collapsing every rec to ~1 percentile (or randomly tanking it).
-            score_vec = embed_vec if embed_vec is not None else vec
-            new_prob = self._score_like_ask(
-                score_vec, move_signals, struct=struct, baseline_clf=baseline_clf
-            )
-            new_score = self.percentile_score(new_prob)
-            xy = self._openai_point(vec)
-            if xy is None and self.fallback_pca is not None:
-                try:
-                    _, xy = self._tfidf_neighbours(reframed)
-                except Exception:
-                    xy = np.array([0.0, 0.0])
-            if xy is None:
-                xy = np.array([0.0, 0.0])
-            delta = float(new_prob) - float(baseline)
-            if delta != delta or abs(delta) == float("inf"):
-                delta = 0.0
-            delta = max(-1.0, min(1.0, delta))
-            score_delta = int(new_score) - int(baseline_score)
-            score_delta = max(-100, min(100, score_delta))
-            effort = float(spec.get("effort_hours") or 4.0)
-            if effort != effort or effort < 0:
-                effort = 4.0
             moves.append(
-                {
-                    "label": spec["label"],
-                    "rationale": spec["rationale"],
-                    "new_prob": round(finite_unit(new_prob), 4),
-                    "delta": round(delta, 4),
-                    "new_score": new_score,
-                    "score_delta": score_delta,
-                    "new_point": {"x": float(xy[0]), "y": float(xy[1])},
-                    "effort_hours": round(float(effort), 2),
-                    "feasible": bool(effort <= budget),
-                }
+                self._pack_coach_move(
+                    spec,
+                    signals,
+                    embed_vec,
+                    vec,
+                    baseline,
+                    baseline_clf,
+                    baseline_score,
+                    budget,
+                )
             )
+        moves = [m for m in moves if abs(int(m.get("score_delta") or 0)) >= 1]
         moves.sort(key=lambda m: -m["score_delta"])
+        moves = moves[:4]
+        for i, move in enumerate(moves):
+            move["id"] = f"m{i}"
         out["moves"] = moves
         return json_safe(out)
+
+    def _pack_coach_move(
+        self,
+        spec: dict[str, Any],
+        signals: dict[str, Any],
+        embed_vec: np.ndarray | None,
+        vec: np.ndarray | None,
+        baseline: float,
+        baseline_clf: float | None,
+        baseline_score: int,
+        budget: float,
+    ) -> dict[str, Any]:
+        spec = _enrich_coach_features(spec, signals)
+        feats = spec.get("features") or {}
+        hardware = bool(feats.get("hardware"))
+        has_video = bool(feats.get("has_video"))
+        extra = int(feats.get("extra_tech_tags") or 0)
+        reframed = str(spec.get("reframed_description") or "")
+        move_signals = dict(signals)
+        move_signals["hardware"] = hardware or bool(signals.get("hardware"))
+        move_signals["has_video"] = has_video or bool(signals.get("has_video"))
+        move_signals["n_tech"] = float(signals.get("n_tech") or 0) + extra
+        if move_signals["hardware"] and not signals.get("hardware"):
+            move_signals["n_tech"] = float(move_signals["n_tech"]) + 1
+        move_signals["length"] = signals.get("length")
+        blob = f"{spec.get('label') or ''} {spec.get('rationale') or ''}".lower()
+        repo_hint = any(
+            w in blob
+            for w in ("github", "public repo", "publish the repo", "put the code on")
+        )
+        if repo_hint or feats.get("has_repo"):
+            move_signals["has_repo"] = 1.0
+        else:
+            move_signals["has_repo"] = signals.get("has_repo")
+        move_signals["team_size"] = signals.get("team_size") or 4
+        struct = query_features(move_signals)
+        # Score the same idea with the move's features. Re-embedding a paraphrase
+        # was collapsing every rec to ~1 percentile (or randomly tanking it).
+        score_vec = embed_vec if embed_vec is not None else vec
+        new_prob = self._score_like_ask(
+            score_vec, move_signals, struct=struct, baseline_clf=baseline_clf
+        )
+        new_score = self.percentile_score(new_prob)
+        xy = self._openai_point(vec) if vec is not None else None
+        if xy is None and self.fallback_pca is not None:
+            try:
+                _, xy = self._tfidf_neighbours(reframed)
+            except Exception:
+                xy = np.array([0.0, 0.0])
+        if xy is None:
+            xy = np.array([0.0, 0.0])
+        delta = float(new_prob) - float(baseline)
+        if delta != delta or abs(delta) == float("inf"):
+            delta = 0.0
+        delta = max(-1.0, min(1.0, delta))
+        score_delta = int(new_score) - int(baseline_score)
+        score_delta = max(-100, min(100, score_delta))
+        effort = float(spec.get("effort_hours") or 4.0)
+        if effort != effort or effort < 0:
+            effort = 4.0
+        return {
+            "label": spec.get("label") or "Untitled move",
+            "rationale": spec.get("rationale") or "",
+            "reframed_description": reframed[:4000],
+            "features": dict(feats),
+            "new_prob": round(finite_unit(new_prob), 4),
+            "delta": round(delta, 4),
+            "new_score": new_score,
+            "score_delta": score_delta,
+            "new_point": {"x": float(xy[0]), "y": float(xy[1])},
+            "effort_hours": round(float(effort), 2),
+            "feasible": bool(effort <= budget),
+        }
+
+    def coach_stack(
+        self,
+        idea: str,
+        specs: list[dict[str, Any]],
+        github: str = "",
+        time_budget_hours: float | None = None,
+    ) -> dict[str, Any]:
+        """Rescore a pin-stack of coach moves as one combined idea. No Gemini."""
+        from github_repo import compose_embed_text
+
+        remaining, budget = _coach_clock(time_budget_hours)
+        prompt = (idea or "").strip()
+        document = compose_embed_text(prompt, None) or prompt
+        signals = parse_signals(document, None)
+        if (github or "").strip():
+            signals["has_repo"] = 1.0
+        embed_vec = None
+        try:
+            embed_vec, _point = self._embed_document(document)
+        except Exception as exc:
+            print(f"coach stack embed skipped ({exc})")
+            embed_vec = None
+        baseline_clf, _ = self._probability(embed_vec, signals)
+        baseline = self._score_like_ask(embed_vec, signals)
+        baseline_score = self.percentile_score(baseline)
+        clock = {
+            "baseline": round(finite_unit(baseline), 4),
+            "baseline_score": baseline_score,
+            "hours_remaining": float(remaining),
+            "time_budget_hours": float(budget),
+        }
+        cleaned: list[dict[str, Any]] = []
+        for spec in specs or []:
+            if not isinstance(spec, dict):
+                continue
+            cleaned.append(spec)
+            if len(cleaned) >= 4:
+                break
+        if not cleaned:
+            return json_safe(
+                {
+                    **clock,
+                    "labels": [],
+                    "label": "",
+                    "new_prob": clock["baseline"],
+                    "delta": 0.0,
+                    "new_score": baseline_score,
+                    "score_delta": 0,
+                    "new_point": {"x": 0.0, "y": 0.0},
+                    "effort_hours": 0.0,
+                    "feasible": True,
+                    "features": {},
+                }
+            )
+        combined = _combine_coach_specs(cleaned, prompt)
+        packed = self._pack_coach_move(
+            combined,
+            signals,
+            embed_vec,
+            None,
+            baseline,
+            baseline_clf,
+            baseline_score,
+            budget,
+        )
+        try:
+            _vec, point = self._embed_document(combined["reframed_description"])
+            packed["new_point"] = {"x": float(point["x"]), "y": float(point["y"])}
+        except Exception as exc:
+            print(f"coach stack point skipped ({exc})")
+        packed["labels"] = [str(s.get("label") or "") for s in cleaned]
+        packed.update(clock)
+        return json_safe(packed)
 
     def chat(self, messages: list[dict[str, Any]], idea: str = "") -> dict[str, Any]:
         """Phrasing-only chat. Numbers come from /api/ask after Preview."""
@@ -1557,7 +1776,7 @@ class Engine:
             cleaned.append({"role": role, "content": content[:2000]})
         cleaned = cleaned[-8:]
         idea = (idea or "").strip()[:2000]
-        empty = {"reply": "Chat is quiet. Place it still works.", "framings": []}
+        empty = {"reply": "Chat could not answer. Place it still works.", "framings": []}
         if not cleaned:
             return json_safe(empty)
         seed = "\n".join(x for x in (idea, cleaned[-1]["content"]) if x).strip()
@@ -1603,6 +1822,7 @@ class Engine:
                 break
         if not reply:
             reply = "Here is a tighter framing. Preview it on the map if you want the classifier number."
+        reply = _complete_chat_reply(reply, framings)
         return json_safe({"reply": reply, "framings": framings})
 
     def answer_question(self, question: str) -> dict[str, Any]:
@@ -1654,9 +1874,10 @@ class Engine:
             GROUND_RULES
             + " You help Hack the North teams reframe an idea. Return STRICT JSON only: "
             '{"reply":str,"framings":[{"label":str,"text":str,"rationale":str}]}. '
-            "reply is one or two sentences. Give zero to two framings. "
-            "text is the whole idea rewritten. You only phrase. "
-            "Numbers are forbidden in reply, label, text, and rationale. "
+            "reply is 2 to 5 complete sentences that answer the question. Never open with "
+            "'here are N ways' unless every item is finished inside reply. Give zero to two "
+            "framings; each framing must include a full rewritten idea in text. "
+            "You only phrase. Numbers are forbidden in reply, label, text, and rationale. "
             "You may say finalist. If you mention a past project, copy title and year from CONTEXT."
         )
         history = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
@@ -1664,9 +1885,9 @@ class Engine:
             "CONTEXT:\n"
             f"{(ctx.get('text') or '')[:12000]}\n\n"
             f"Current idea:\n{(idea or '(none placed yet)')[:2000]}\n\n"
-            f"Conversation:\n{history}\n\nJSON only."
+            f"Conversation:\n{history}\n\nJSON only. Finish the reply."
         )
-        return _parse_chat(self._gemini_raw(system, user))
+        return _parse_chat(self._gemini_raw(system, user, max_output_tokens=1024, timeout=10.0))
 
     def _gemini_answer(self, question: str, ctx: dict[str, Any]) -> dict[str, Any]:
         system = (
@@ -1686,6 +1907,8 @@ class Engine:
 
 
 def _gemini_unavailable(exc: Exception) -> bool:
+    if isinstance(exc, json.JSONDecodeError):
+        return True
     msg = str(exc).lower()
     needles = (
         "unset",
@@ -1693,6 +1916,8 @@ def _gemini_unavailable(exc: Exception) -> bool:
         "timeout",
         "connect",
         "network",
+        "expecting property",
+        "expecting value",
         "503",
         "429",
         "500",
@@ -1701,66 +1926,145 @@ def _gemini_unavailable(exc: Exception) -> bool:
     return any(n in msg for n in needles)
 
 
-def _enrich_coach_features(spec: dict[str, Any]) -> dict[str, Any]:
-    """Fill hardware/video flags from the move text when Gemini omits them."""
+def _enrich_coach_features(spec: dict[str, Any], signals: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Fill hardware/video/repo flags from the move's label, not Gemini's booleans."""
+    signals = signals or {}
     feats = spec.get("features") if isinstance(spec.get("features"), dict) else {}
     blob = " ".join(
-        str(spec.get(k) or "") for k in ("label", "rationale", "reframed_description")
+        str(spec.get(k) or "") for k in ("label", "rationale")
     ).lower()
-    hardware = bool(feats.get("hardware")) or any(
+    hardware = any(
         w in blob for w in ("physical", "hardware", "sensor", "wearable", "prototype you can")
     )
-    has_video = bool(feats.get("has_video")) or any(
+    has_video = any(
         w in blob
         for w in ("video", "film", "youtube", "live demo", "demonstration", "screen recording")
+    )
+    has_repo = any(
+        w in blob for w in ("github", "public repo", "publish the repo", "put the code on")
     )
     try:
         extra = int(feats.get("extra_tech_tags") or 0)
     except (TypeError, ValueError):
         extra = 0
-    if any(w in blob for w in ("stack", "sdk", "named a", "name a real")):
-        extra = max(extra, 2)
+    stackish = any(
+        w in blob
+        for w in ("name a real stack", "named stack", "name a concrete stack", "name real stack")
+    )
+    extra = 2 if stackish else 0
+    if hardware and signals.get("hardware"):
+        extra = 0
     spec["features"] = {
         "hardware": hardware,
         "has_video": has_video,
+        "has_repo": has_repo,
         "extra_tech_tags": max(0, min(8, extra)),
     }
     return spec
 
 
-def _fallback_coach_specs(idea: str) -> list[dict[str, Any]]:
+def _combine_coach_specs(specs: list[dict[str, Any]], idea: str) -> dict[str, Any]:
+    """Merge pinned moves into one spec so features OR and the map point is re-embedded."""
+    core = (idea or "").strip()
+    labels: list[str] = []
+    rationales: list[str] = []
+    additions: list[str] = []
+    effort = 0.0
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        lab = str(spec.get("label") or "").strip()
+        if lab:
+            labels.append(lab)
+        rat = str(spec.get("rationale") or "").strip()
+        if rat:
+            rationales.append(rat)
+        try:
+            hours = float(spec.get("effort_hours") or 0.0)
+        except (TypeError, ValueError):
+            hours = 0.0
+        if hours != hours or hours < 0:
+            hours = 0.0
+        effort += hours
+        ref = str(spec.get("reframed_description") or "").strip()
+        if not ref:
+            continue
+        if core:
+            n = min(48, len(core))
+            prefix = core[:n]
+            if prefix and ref.lower().startswith(prefix.lower()):
+                rest = ref[len(core) :].strip() if len(ref) >= len(core) else ref
+                additions.append(rest or ref)
+            else:
+                additions.append(ref)
+        else:
+            additions.append(ref)
+    effort = max(0.0, min(168.0, effort))
+    reframed = " ".join(x for x in [core, *additions] if x).strip()
+    if not reframed:
+        reframed = core or "stacked moves"
+    return {
+        "label": " + ".join(labels)[:160] or "Stacked moves",
+        "rationale": " ".join(rationales)[:240] or "Stacked moves, rescored together.",
+        "reframed_description": reframed[:4000],
+        "effort_hours": effort,
+    }
+
+
+def _fallback_coach_specs(idea: str, signals: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Phrase-only moves when Gemini is down. No prize names."""
     core = (idea or "this project").strip() or "this project"
-    return [
-        {
-            "label": "Ship a physical build",
-            "rationale": "A thing a judge can hold reads as more finished than a deck.",
-            "reframed_description": f"{core} Built as a physical prototype you can demo in person.",
-            "effort_hours": 6.0,
-            "features": {"hardware": True, "has_video": False, "extra_tech_tags": 1},
-        },
-        {
-            "label": "Film a live demo",
-            "rationale": "A short video of it working is the fastest way to make the writeup feel real.",
-            "reframed_description": f"{core} Includes a filmed live demo of the working prototype.",
-            "effort_hours": 3.0,
-            "features": {"hardware": False, "has_video": True, "extra_tech_tags": 0},
-        },
-        {
-            "label": "Name a real stack",
-            "rationale": "Specific tools in the writeup read as a build, not a pitch.",
-            "reframed_description": f"{core} Names a concrete stack and how each piece is used on judging day.",
-            "effort_hours": 2.0,
-            "features": {"hardware": False, "has_video": False, "extra_tech_tags": 2},
-        },
-        {
-            "label": "Tighten the judging story",
-            "rationale": "One sentence about what a judge should see in thirty seconds.",
-            "reframed_description": f"{core} Opens with a thirty-second judging-day demo and what it proves.",
-            "effort_hours": 2.0,
-            "features": {"hardware": False, "has_video": False, "extra_tech_tags": 0},
-        },
-    ]
+    signals = signals or {}
+    specs: list[dict[str, Any]] = []
+    if float(signals.get("has_repo") or 0) < 1.0:
+        specs.append(
+            {
+                "label": "Put the code on GitHub",
+                "rationale": "A public repo is what judges actually open; writeups without one look unfinished.",
+                "reframed_description": f"{core} The working code is on a public GitHub repository.",
+                "effort_hours": 1.5,
+                "features": {"hardware": False, "has_video": False, "has_repo": True, "extra_tech_tags": 0},
+            }
+        )
+    if not signals.get("has_video"):
+        specs.append(
+            {
+                "label": "Film a live demo",
+                "rationale": "A short video of it working is the fastest way to make the writeup feel real.",
+                "reframed_description": f"{core} Includes a filmed live demo of the working prototype.",
+                "effort_hours": 3.0,
+                "features": {"hardware": False, "has_video": True, "has_repo": False, "extra_tech_tags": 0},
+            }
+        )
+    if not signals.get("hardware"):
+        specs.append(
+            {
+                "label": "Ship a physical build",
+                "rationale": "A thing a judge can hold reads as more finished than a deck.",
+                "reframed_description": f"{core} Built as a physical prototype you can demo in person.",
+                "effort_hours": 6.0,
+                "features": {"hardware": True, "has_video": False, "has_repo": False, "extra_tech_tags": 0},
+            }
+        )
+    specs.extend(
+        [
+            {
+                "label": "Name a real stack",
+                "rationale": "Specific tools in the writeup read as a build, not a pitch.",
+                "reframed_description": f"{core} Names a concrete stack and how each piece is used on judging day.",
+                "effort_hours": 2.0,
+                "features": {"hardware": False, "has_video": False, "has_repo": False, "extra_tech_tags": 2},
+            },
+            {
+                "label": "Tighten the judging story",
+                "rationale": "One sentence about what a judge should see in thirty seconds.",
+                "reframed_description": f"{core} Opens with a thirty-second judging-day demo and what it proves.",
+                "effort_hours": 2.0,
+                "features": {"hardware": False, "has_video": False, "has_repo": False, "extra_tech_tags": 0},
+            },
+        ]
+    )
+    return specs[:4]
 
 
 def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
@@ -1803,6 +2107,7 @@ def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
                 "features": {
                     "hardware": bool(feats.get("hardware")),
                     "has_video": bool(feats.get("has_video")),
+                    "has_repo": bool(feats.get("has_repo")),
                     "extra_tech_tags": extra,
                 },
             }
@@ -1810,32 +2115,146 @@ def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
     return moves[:8]
 
 
-def _parse_chat(raw: str) -> dict[str, Any]:
+def _strip_fence(raw: str) -> str:
     text = (raw or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    data = json.loads(text)
+    return text.strip()
+
+
+def _loads_jsonish(raw: str) -> Any:
+    text = _strip_fence(raw)
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+        return obj
+    except json.JSONDecodeError:
+        return None
+
+
+def _json_string_field(text: str, key: str) -> str:
+    m = re.search(rf'"{re.escape(key)}"\s*:\s*"', text)
+    if not m:
+        return ""
+    i = m.end()
+    out: list[str] = []
+    escaped = False
+    while i < len(text):
+        ch = text[i]
+        if escaped:
+            out.append(ch)
+            escaped = False
+        elif ch == "\\":
+            out.append(ch)
+            escaped = True
+        elif ch == '"':
+            break
+        else:
+            out.append(ch)
+        i += 1
+    raw = "".join(out)
+    try:
+        return json.loads('"' + raw + '"')
+    except json.JSONDecodeError:
+        return raw.replace("\\n", "\n").replace('\\"', '"')
+
+
+def _recover_json_array(text: str, key: str) -> list[Any]:
+    m = re.search(rf'"{re.escape(key)}"\s*:\s*\[', text)
+    if not m:
+        return []
+    chunk = text[m.end() - 1 :]
+    try:
+        arr, _ = json.JSONDecoder().raw_decode(chunk)
+        return arr if isinstance(arr, list) else []
+    except json.JSONDecodeError:
+        pass
+    out: list[Any] = []
+    dec = json.JSONDecoder()
+    i = 1
+    while i < len(chunk):
+        while i < len(chunk) and chunk[i] in " \n\r\t,":
+            i += 1
+        if i >= len(chunk) or chunk[i] in "]":
+            break
+        if chunk[i] != "{":
+            break
+        try:
+            obj, end = dec.raw_decode(chunk[i:])
+        except json.JSONDecodeError:
+            break
+        if isinstance(obj, dict):
+            out.append(obj)
+        i += end
+    return out
+
+
+def _looks_unfinished_reply(reply: str) -> bool:
+    text = (reply or "").strip()
+    if not text:
+        return True
+    low = text.lower()
+    if text.endswith((",", ";", ":", "...", "…", "-")):
+        return True
+    intro = re.search(
+        r"(?i)\b(here are|here is|below are|two ways|a few ways|try these|consider these)\b",
+        low,
+    )
+    if intro and len(text) < 280:
+        sentences = [s for s in re.split(r"[.!?]+", text) if s.strip()]
+        if len(sentences) < 2:
+            return True
+        if low.rstrip().endswith(("track", "prize", "ways", "way", "options", "option")):
+            return True
+    return False
+
+
+def _complete_chat_reply(reply: str, framings: list[Any]) -> str:
+    text = (reply or "").strip()
+    if not _looks_unfinished_reply(text):
+        return text
+    if framings:
+        n = sum(1 for row in framings if isinstance(row, dict))
+        if n == 1:
+            return "One concrete reframe is below. Preview it on the map if you want a classifier score."
+        return "A few concrete reframes are below. Preview one on the map if you want a classifier score."
+    return (
+        "Name the sponsor product in the README and demo a real call to it. "
+        "A related word in the pitch is not enough for a Best Use track."
+    )
+
+
+def _parse_chat(raw: str) -> dict[str, Any]:
+    text = _strip_fence(raw)
+    data = _loads_jsonish(text)
     if not isinstance(data, dict):
-        return {"reply": "", "framings": []}
+        data = {}
     rows = data.get("framings") or data.get("ideas") or []
-    if not isinstance(rows, list):
-        rows = []
-    return {"reply": str(data.get("reply") or ""), "framings": rows}
+    if not isinstance(rows, list) or not rows:
+        rows = _recover_json_array(text, "framings") or _recover_json_array(text, "ideas")
+    reply = str(data.get("reply") or "").strip() or _json_string_field(text, "reply")
+    return {"reply": reply, "framings": rows if isinstance(rows, list) else []}
 
 
 def _parse_answer(raw: str) -> dict[str, Any]:
-    text = (raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    data = json.loads(text)
+    text = _strip_fence(raw)
+    data = _loads_jsonish(text)
     if not isinstance(data, dict):
-        return {"reply": "", "citations": []}
+        data = {}
     rows = data.get("citations") or []
-    if not isinstance(rows, list):
-        rows = []
-    return {"reply": str(data.get("reply") or ""), "citations": rows}
+    if not isinstance(rows, list) or not rows:
+        rows = _recover_json_array(text, "citations")
+    reply = str(data.get("reply") or "").strip() or _json_string_field(text, "reply")
+    return {"reply": reply, "citations": rows if isinstance(rows, list) else []}
 
 
 def _strip_percents(s: str) -> str:

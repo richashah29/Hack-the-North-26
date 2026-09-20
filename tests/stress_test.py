@@ -1186,7 +1186,7 @@ def group_frontend() -> None:
     record(g, "long title CSS wraps", "overflow-wrap: anywhere" in css and "word-break: break-word" in css, "")
     record(g, "null title/tagline never print undefined", "n.title || \"\"" in js or "n && n.title != null" in js, "")
     record(g, "empty coach moves have a sentence", "Coach is quiet" in js, "")
-    record(g, "AUC null renders em dash", '"—"' in js and "auc" in js, "")
+    record(g, "AUC null renders a placeholder", 'score == null ? "-"' in js and "auc" in js, "")
     record(g, "NaN probability renders em dash", "Number.isFinite(p)" in js, "")
     record(g, "ask in-flight guard", "askInFlight" in js, "")
     record(g, "coach in-flight guard", "coachInFlight" in js, "")

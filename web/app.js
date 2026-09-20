@@ -9,7 +9,7 @@
   const askBtn = document.getElementById("ask-btn");
   const askResult = document.getElementById("ask-result");
   const askBack = document.getElementById("ask-back");
-  const askResultIdea = document.getElementById("ask-result-idea");
+  const neighbourLoader = document.getElementById("neighbour-loader");
   const neighbourList = document.getElementById("neighbour-list");
   const neighboursEmpty = document.getElementById("neighbours-empty");
   const twinsEl = document.getElementById("twins");
@@ -26,7 +26,6 @@
   const probNum = document.getElementById("prob-num");
   const probCaveat = document.getElementById("prob-caveat");
   const probBase = document.getElementById("prob-base");
-  const probWhy = document.getElementById("prob-why");
   const probMeta = document.getElementById("prob-meta");
   const corpusMeta = document.getElementById("corpus-meta");
   const chartsEl = document.getElementById("charts");
@@ -35,6 +34,7 @@
   const coachBtn = document.getElementById("coach-btn");
   const coachStatus = document.getElementById("coach-status");
   const coachList = document.getElementById("coach-list");
+  const coachStack = document.getElementById("coach-stack");
   const timeToggle = document.getElementById("coach-time-on");
   const coachTime = document.getElementById("coach-time");
   const coachHours = document.getElementById("coach-hours");
@@ -49,7 +49,15 @@
   let lastCoach = null;
   let budgetTouched = false;
   let askInFlight = false;
+  let hasPlacedOnce = false;
+  let neighbourLoaderTimer = 0;
   let coachInFlight = false;
+  let pinnedIds = [];
+  let stackResult = null;
+  let stackGhostT = 1;
+  let stackRaf = 0;
+  let stackSeq = 0;
+  let stackAbort = null;
 
   const GOLD = "#C44B32";
   const FAINT = "#5F8A88";
@@ -77,6 +85,7 @@
   let pulse = 0;
   let raf = 0;
   let lastIdeaText = "";
+  let lastGithub = "";
   let ghost = null;
   let ghostRaf = 0;
   let yearCap = null;
@@ -104,7 +113,8 @@
   const chatBtn = document.getElementById("chat-btn");
   const chatStatus = document.getElementById("chat-status");
   const compareEl = document.getElementById("compare");
-  const compareClear = document.getElementById("compare-clear");
+  const compareBody = document.getElementById("compare-body");
+  const compareClose = document.getElementById("compare-close");
   let preview = null;
   let lastPreviewText = "";
   let chatThread = [];
@@ -409,25 +419,45 @@
     }
 
     // 3. OWN-IDEA: outline only, no fill. Nothing else on the map uses this style.
-    if (ghost && ghost.from && ghost.to && query && query.point) {
-      const a = project(ghost.from);
-      const b = project(ghost.to);
-      const t = ghost.t;
-      const gx = a.x + (b.x - a.x) * t;
-      const gy = a.y + (b.y - a.y) * t;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = "rgba(42,24,16,0.4)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(gx, gy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.strokeStyle = PREVIEW;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(gx, gy, r.you, 0, Math.PI * 2);
-      ctx.stroke();
+    const originPt = query && query.point;
+    const pinned = pinnedMoves();
+    if (originPt) {
+      for (const move of pinned) {
+        if (!move || !move.new_point) continue;
+        const stacked = pinned.length >= 2;
+        strokeCoachPath(ctx, originPt, move.new_point, 1, r.you, stacked ? {
+          dash: [4, 5],
+          line: "rgba(42,24,16,0.22)",
+          width: 1.25,
+          tip: "rgba(61,155,150,0.4)",
+          tipWidth: 1.75,
+        } : {
+          dash: [5, 5],
+          line: "rgba(42,24,16,0.4)",
+          width: 1.5,
+          tip: PREVIEW,
+          tipWidth: 2,
+        });
+      }
+      if (stackResult && stackResult.new_point && pinned.length >= 2) {
+        const t = Number.isFinite(stackGhostT) ? stackGhostT : 1;
+        strokeCoachPath(ctx, originPt, stackResult.new_point, t, r.you * 1.12, {
+          dash: [],
+          line: "rgba(61,155,150,0.8)",
+          width: 2.25,
+          tip: PREVIEW,
+          tipWidth: 2.5,
+        });
+      }
+    }
+    if (ghost && ghost.from && ghost.to && originPt) {
+      strokeCoachPath(ctx, ghost.from, ghost.to, ghost.t, r.you, {
+        dash: [5, 5],
+        line: "rgba(42,24,16,0.4)",
+        width: 1.5,
+        tip: PREVIEW,
+        tipWidth: 2,
+      });
     }
 
     if (preview && preview.point && query && query.point) {
@@ -471,8 +501,9 @@
       tooltip.innerHTML = `<div class="tip-title">${p.preview ? "Preview idea" : "Your idea"}</div>`;
     } else {
       const badge = p.finalist ? `<span class="tip-badge">Finalist</span>` : "";
+      const hint = devpostUrl(p) ? `<div class="tip-open">Open on Devpost</div>` : "";
       tooltip.innerHTML = `<div class="tip-title">${escapeHtml(p.title || "")}</div>
-        <div class="tip-meta"><span>${escapeHtml(String(p.year || ""))}</span>${badge}</div>`;
+        <div class="tip-meta"><span>${escapeHtml(String(p.year || ""))}</span>${badge}</div>${hint}`;
     }
     const rect = canvas.getBoundingClientRect();
     tooltip.style.left = `${ev.clientX - rect.left}px`;
@@ -489,7 +520,7 @@
     }
     const rect = canvas.getBoundingClientRect();
     hover = hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
-    canvas.style.cursor = hover ? "crosshair" : "grab";
+    canvas.style.cursor = hover && !hover.you && devpostUrl(hover) ? "pointer" : hover ? "crosshair" : "grab";
     showTooltip(hover, ev);
   });
   canvas.addEventListener("mousedown", (ev) => {
@@ -498,7 +529,18 @@
     canvas.style.cursor = "grabbing";
     tooltip.hidden = true;
   });
-  window.addEventListener("mouseup", () => {
+  window.addEventListener("mouseup", (ev) => {
+    if (drag) {
+      const moved = Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y);
+      const origin = drag;
+      drag = null;
+      canvas.style.cursor = "grab";
+      if (moved < 6) {
+        const rect = canvas.getBoundingClientRect();
+        openDevpost(hitTest(origin.x - rect.left, origin.y - rect.top));
+      }
+      return;
+    }
     drag = null;
     canvas.style.cursor = "grab";
   });
@@ -515,6 +557,8 @@
   canvas.addEventListener("dblclick", (ev) => {
     ev.preventDefault();
     const rect = canvas.getBoundingClientRect();
+    const hit = hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+    if (hit && !hit.you && devpostUrl(hit)) return;
     if (view.scale >= SCALE_MAX - 0.05) resetView();
     else zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, 1.8);
   });
@@ -563,7 +607,14 @@
       draw();
     }
   }, { passive: false });
-  canvas.addEventListener("touchend", () => {
+  canvas.addEventListener("touchend", (ev) => {
+    if (drag && !pinch && ev.changedTouches && ev.changedTouches[0]) {
+      const t = ev.changedTouches[0];
+      if (Math.hypot(t.clientX - drag.x, t.clientY - drag.y) < 10) {
+        const rect = canvas.getBoundingClientRect();
+        openDevpost(hitTest(t.clientX - rect.left, t.clientY - rect.top));
+      }
+    }
     pinch = null;
     drag = null;
   });
@@ -594,26 +645,79 @@
 
   function fmtN(n) {
     const v = Number(n);
-    if (!Number.isFinite(v)) return "—";
+    if (!Number.isFinite(v)) return "-";
     return v.toLocaleString("en-US");
   }
 
   function fmtPct(v, digits = 1) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return "—";
+    if (!Number.isFinite(n)) return "-";
     return `${(n * 100).toFixed(digits)}%`;
   }
 
   function fmtSim(v) {
     const n = Number(v);
     if (!Number.isFinite(n)) return "";
-    if (n >= 0.15 && n <= 1) return `${Math.round(n * 100)}% similar`;
-    return `sim ${n.toFixed(3)}`;
+    const pct = n > 1.0001 ? n : n * 100;
+    return `${Math.round(Math.max(0, Math.min(100, pct)))}% similar`;
+  }
+
+  function setNeighbourLoader(mode) {
+    if (!neighbourLoader) return;
+    if (neighbourLoaderTimer) {
+      clearTimeout(neighbourLoaderTimer);
+      neighbourLoaderTimer = 0;
+    }
+    if (mode === "off") {
+      neighbourLoader.classList.remove("is-spinning");
+      neighbourLoader.classList.add("is-fading");
+      neighbourLoaderTimer = window.setTimeout(() => {
+        neighbourLoader.hidden = true;
+        neighbourLoader.classList.remove("is-fading");
+      }, reducedMotion ? 0 : 400);
+      return;
+    }
+    if (mode === "idle" && hasPlacedOnce) {
+      neighbourLoader.hidden = true;
+      neighbourLoader.classList.remove("is-spinning", "is-fading");
+      return;
+    }
+    neighbourLoader.hidden = false;
+    neighbourLoader.classList.remove("is-fading");
+    neighbourLoader.classList.toggle("is-spinning", mode === "spin");
+  }
+
+  function devpostUrl(p) {
+    if (!p || p.you) return "";
+    const slug = String(p.slug || "").trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,120}$/i.test(slug)) return "";
+    return `https://devpost.com/software/${slug}`;
+  }
+
+  function openDevpost(p) {
+    const url = typeof p === "string" ? p : devpostUrl(p);
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function setDevpostTarget(el, item) {
+    if (!el) return;
+    const url = devpostUrl(item);
+    if (url) {
+      el.dataset.devpost = url;
+      el.setAttribute("role", "link");
+      el.tabIndex = 0;
+    } else {
+      delete el.dataset.devpost;
+      el.removeAttribute("role");
+      el.removeAttribute("tabindex");
+    }
   }
 
   function renderTwinCard(el, kind, item) {
     if (!el) return;
     el.classList.toggle("is-empty", !item);
+    setDevpostTarget(el, item);
     if (!item) {
       el.innerHTML = `
         <p class="twin-kicker">${kind === "win" ? "Closest finalist" : "Closest not a finalist"}</p>
@@ -642,7 +746,7 @@
     neighbourList.innerHTML = "";
     if (!items || !items.length) {
       neighboursEmpty.hidden = false;
-      neighboursEmpty.textContent = "Twelve years of submissions. Type an idea to see what it sits next to.";
+      neighboursEmpty.textContent = "No close matches in this corpus yet.";
       return;
     }
     neighboursEmpty.hidden = true;
@@ -662,8 +766,33 @@
         ${n.finalist ? '<div class="badge">Finalist</div>' : ""}
         ${sim ? `<div class="twin-meta">${escapeHtml(sim)}</div>` : ""}
       `;
+      setDevpostTarget(li, n);
       neighbourList.appendChild(li);
     }
+  }
+
+  function strokeCoachPath(ctx, from, to, t, tipR, style) {
+    if (!from || !to) return;
+    const a = project(from);
+    const b = project(to);
+    const tt = t > 1 ? 1 : t < 0 ? 0 : t;
+    const gx = a.x + (b.x - a.x) * tt;
+    const gy = a.y + (b.y - a.y) * tt;
+    ctx.save();
+    ctx.setLineDash(style.dash || []);
+    ctx.strokeStyle = style.line || "rgba(42,24,16,0.4)";
+    ctx.lineWidth = style.width || 1.5;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(gx, gy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = style.tip || PREVIEW;
+    ctx.lineWidth = style.tipWidth || 2;
+    ctx.beginPath();
+    ctx.arc(gx, gy, tipR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function clearGhost() {
@@ -688,6 +817,180 @@
       if (ghost.t < 1) ghostRaf = requestAnimationFrame(step);
     };
     ghostRaf = requestAnimationFrame(step);
+  }
+
+  function resetPins() {
+    pinnedIds = [];
+    stackResult = null;
+    stackGhostT = 1;
+    stackSeq += 1;
+    if (stackAbort) {
+      try { stackAbort.abort(); } catch (_) {}
+      stackAbort = null;
+    }
+    cancelAnimationFrame(stackRaf);
+    if (coachStack) {
+      coachStack.hidden = true;
+      coachStack.innerHTML = "";
+    }
+  }
+
+  function pinnedMoves() {
+    const moves = (lastCoach && lastCoach.moves) || [];
+    const byId = new Map(moves.map((m, i) => [m.id || `m${i}`, m]));
+    return pinnedIds.map((id) => byId.get(id)).filter(Boolean);
+  }
+
+  function averagePoints(moves) {
+    const pts = (moves || []).map((m) => m && m.new_point).filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (!pts.length) return null;
+    return {
+      x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
+      y: pts.reduce((s, p) => s + p.y, 0) / pts.length,
+    };
+  }
+
+  function paintCoachPins() {
+    if (!coachList) return;
+    for (const li of coachList.querySelectorAll(".coach-card")) {
+      const on = pinnedIds.includes(li.getAttribute("data-id"));
+      li.classList.toggle("is-on", on);
+      li.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  function playStackGhost(point) {
+    if (!query || !query.point || !point) {
+      stackGhostT = 1;
+      draw();
+      return;
+    }
+    if (reducedMotion) {
+      stackGhostT = 1;
+      draw();
+      return;
+    }
+    stackGhostT = 0;
+    cancelAnimationFrame(stackRaf);
+    const step = () => {
+      stackGhostT = Math.min(1, stackGhostT + 0.07);
+      draw();
+      if (stackGhostT < 1) stackRaf = requestAnimationFrame(step);
+    };
+    stackRaf = requestAnimationFrame(step);
+  }
+
+  function renderStackBar(data) {
+    if (!coachStack) return;
+    const picked = pinnedMoves();
+    if (!picked.length) {
+      coachStack.hidden = true;
+      coachStack.innerHTML = "";
+      return;
+    }
+    coachStack.hidden = false;
+    const labels = (data && data.labels) || picked.map((m) => m.label).filter(Boolean);
+    const title = labels.join(" + ") || "Stacked moves";
+    if (data && data.loading) {
+      coachStack.innerHTML = `<p class="coach-stack-label">${escapeHtml(title)}</p>
+        <p class="coach-stack-note">Recalculating the combined score…</p>`;
+      return;
+    }
+    const scoreSrc = picked.length >= 2 ? data : picked[0];
+    const signed = scoreSrc && (scoreSrc.new_score != null || scoreSrc.score_delta != null)
+      ? formatScoreMove(scoreSrc, lastCoach && lastCoach.baseline_score)
+      : "";
+    const effort = Number(scoreSrc && scoreSrc.effort_hours);
+    const aware = timeAwareOn();
+    const budget = budgetValue(lastCoach);
+    const late = aware && Number.isFinite(effort) && effort > budget;
+    const note = picked.length >= 2
+      ? "Combined and rescored, not the sum of the cards."
+      : "Click another move to stack it.";
+    const bits = [];
+    if (signed) bits.push(escapeHtml(signed));
+    if (aware && Number.isFinite(effort)) bits.push(escapeHtml(formatEffort(effort)));
+    if (late) bits.push("too late");
+    coachStack.innerHTML = `<p class="coach-stack-label">${escapeHtml(picked.length >= 2 ? `Stacked: ${title}` : `Kept: ${title}`)}</p>
+      ${bits.length ? `<p class="coach-stack-score">${bits.join(" · ")}</p>` : ""}
+      <p class="coach-stack-note">${escapeHtml(note)}</p>`;
+  }
+
+  async function syncStack() {
+    const seq = ++stackSeq;
+    if (stackAbort) {
+      try { stackAbort.abort(); } catch (_) {}
+    }
+    paintCoachPins();
+    const picked = pinnedMoves();
+    if (!picked.length) {
+      stackResult = null;
+      stackGhostT = 1;
+      renderStackBar(null);
+      draw();
+      return;
+    }
+    if (picked.length === 1) {
+      stackResult = null;
+      stackGhostT = 1;
+      renderStackBar(picked[0]);
+      playGhost(picked[0]);
+      draw();
+      return;
+    }
+    renderStackBar({ loading: true, labels: picked.map((m) => m.label) });
+    draw();
+    const ac = new AbortController();
+    stackAbort = ac;
+    try {
+      const body = {
+        text: lastIdeaText || (input && input.value.trim()) || "",
+        moves: picked.map((m) => ({
+          label: m.label || "",
+          rationale: m.rationale || "",
+          reframed_description: m.reframed_description || "",
+          effort_hours: Number(m.effort_hours) || 4,
+        })),
+      };
+      const github = lastGithub || (githubInput && githubInput.value.trim()) || "";
+      if (github) body.github = github;
+      if (timeAwareOn() && budgetInput && budgetInput.value !== "") {
+        const n = Number(budgetInput.value);
+        if (Number.isFinite(n) && n >= 0) body.time_budget_hours = n;
+      }
+      const res = await fetch("/api/coach/stack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (seq !== stackSeq) return;
+      if (data && data.degraded) throw new Error("degraded");
+      stackResult = data;
+      renderStackBar(data);
+      playStackGhost(data && data.new_point);
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      if (seq !== stackSeq) return;
+      const fallback = averagePoints(picked);
+      stackResult = fallback
+        ? { new_point: fallback, labels: picked.map((m) => m.label), degraded: true }
+        : null;
+      renderStackBar(stackResult || { degraded: true, labels: picked.map((m) => m.label) });
+      if (fallback) playStackGhost(fallback);
+      else draw();
+      console.error(err);
+    }
+  }
+
+  function togglePin(move, index) {
+    const id = (move && move.id) || `m${index}`;
+    const at = pinnedIds.indexOf(id);
+    if (at >= 0) pinnedIds.splice(at, 1);
+    else if (pinnedIds.length < 4) pinnedIds.push(id);
+    syncStack();
   }
 
   function timeAwareOn() {
@@ -723,12 +1026,6 @@
 
   function setCoachOpen(open) {
     if (coachPanel) coachPanel.hidden = !open;
-  }
-
-  function ideaSummary(text) {
-    const t = String(text || "").replace(/\s+/g, " ").trim();
-    if (!t) return "";
-    return t.length > 90 ? `${t.slice(0, 87)}…` : t;
   }
 
   function setAnswered(on) {
@@ -778,22 +1075,35 @@
     lastCoach = payload || lastCoach;
     coachList.innerHTML = "";
     syncTimeUi(payload);
-    const moves = (payload && payload.moves) || [];
+    const moves = ((payload && payload.moves) || []).filter((m) => {
+      const d = m.score_delta != null ? Number(m.score_delta) : (Number(m.delta) || 0) * 100;
+      return Number.isFinite(d) && Math.abs(d) >= 0.5;
+    });
     if (!moves.length) {
+      resetPins();
       if (coachStatus) {
         coachStatus.hidden = false;
-        coachStatus.textContent = "Coach is quiet. The core map still holds.";
+        coachStatus.textContent = "Coach is quiet. Nothing here moved the score.";
       }
       return;
     }
     if (coachStatus) coachStatus.hidden = true;
     const aware = timeAwareOn();
     const budget = budgetValue(payload);
-    for (const move of moves) {
-      const li = document.createElement("li");
+    const knownIds = new Set(moves.map((m, i) => m.id || `m${i}`));
+    pinnedIds = pinnedIds.filter((id) => knownIds.has(id));
+    for (let i = 0; i < moves.length; i += 1) {
+      const move = moves[i];
+      const id = move.id || `m${i}`;
       const effort = Number(move.effort_hours);
       const feasible = aware ? effort <= budget : true;
-      li.className = `card coach-card${aware && !feasible ? " is-late" : ""}`;
+      const on = pinnedIds.includes(id);
+      const li = document.createElement("li");
+      li.className = `card coach-card${aware && !feasible ? " is-late" : ""}${on ? " is-on" : ""}`;
+      li.setAttribute("data-id", id);
+      li.setAttribute("role", "button");
+      li.setAttribute("tabindex", "0");
+      li.setAttribute("aria-pressed", on ? "true" : "false");
       const scoreDelta = move.score_delta != null
         ? Number(move.score_delta)
         : (Number(move.delta) || 0) * 100;
@@ -817,8 +1127,21 @@
       `;
       li.addEventListener("mouseenter", () => playGhost(move));
       li.addEventListener("mouseleave", clearGhost);
+      li.addEventListener("click", () => togglePin(move, i));
+      li.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          togglePin(move, i);
+        }
+      });
       coachList.appendChild(li);
     }
+    if (pinnedIds.length) renderStackBar(stackResult);
+    else if (coachStack) {
+      coachStack.hidden = true;
+      coachStack.innerHTML = "";
+    }
+    draw();
   }
 
   if (timeToggle) {
@@ -840,16 +1163,23 @@
       if (!text || coachInFlight) return;
       coachInFlight = true;
       coachBtn.disabled = true;
+      coachBtn.textContent = "Coaching…";
       setCoachOpen(true);
+      resetPins();
       syncTimeUi(lastCoach);
+      if (coachPanel) {
+        coachPanel.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+      }
       if (coachStatus) {
         coachStatus.hidden = false;
         coachStatus.classList.add("is-loading");
-        coachStatus.textContent = "Scoring a few moves through the classifier…";
+        coachStatus.textContent = "Scoring a few moves...";
       }
       coachList.innerHTML = "";
       try {
         const body = { text };
+        const github = lastGithub || (githubInput && githubInput.value.trim()) || "";
+        if (github) body.github = github;
         if (timeAwareOn() && budgetInput && budgetInput.value !== "") {
           const n = Number(budgetInput.value);
           if (Number.isFinite(n) && n >= 0) body.time_budget_hours = n;
@@ -862,16 +1192,20 @@
         if (!res.ok) throw new Error(await res.text());
         if (coachStatus) coachStatus.classList.remove("is-loading");
         renderCoach(await res.json());
+        if (coachPanel) {
+          coachPanel.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+        }
       } catch (err) {
         if (coachStatus) {
           coachStatus.hidden = false;
           coachStatus.classList.remove("is-loading");
-          coachStatus.textContent = "Coach skipped. Place it still works.";
+          coachStatus.textContent = "Coach could not run. Your placement is still on the map.";
         }
         console.error(err);
       } finally {
         coachInFlight = false;
         coachBtn.disabled = false;
+        coachBtn.textContent = "Coach me";
       }
     });
   }
@@ -895,9 +1229,17 @@
       tracksEmpty.textContent = payload.error || "Could not load prize tracks.";
       return;
     }
+    if (!(payload.ranked || []).length) {
+      tracksPanel.hidden = true;
+      return;
+    }
     if (tracksMethod) {
       tracksMethod.hidden = false;
-      tracksMethod.textContent = "Each % is a sponsor-prize chance, not the 12 finalists. The arrow is if you ship the SDK.";
+      const nWin = payload.n_winners;
+      const nEv = payload.n_events;
+      tracksMethod.textContent = Number.isFinite(Number(nWin))
+        ? `Likeness to ${nWin} labeled prize winners across ${nEv} events. Recurring MLH families share a sample. This is not the 12-finalist score.`
+        : "Likeness to labeled prize winners across events. This is not the 12-finalist score.";
     }
     if (trackFilters) trackFilters.hidden = false;
     const rows = (payload.ranked || []).filter((row) => {
@@ -908,7 +1250,7 @@
     if (!rows.length) {
       tracksEmpty.hidden = false;
       tracksEmpty.textContent = trackFilter === "actionable"
-        ? "No add/strengthen moves. Try All, or a repo that actually touches a sponsor SDK."
+        ? "No add or strengthen moves. Try All, or mention a sponsor SDK in the idea."
         : "Nothing in this filter.";
       return;
     }
@@ -917,20 +1259,36 @@
     for (const row of rows) {
       const li = document.createElement("li");
       li.className = "card track-card";
-      const now = Math.round((row.p_now ?? row.fit ?? 0) * 100);
-      const iff = Math.round((row.p_if ?? row.p_now ?? 0) * 100);
-      const lift = iff > now + 1 ? ` <span class="track-if">→ ${iff}% if you do this</span>` : "";
+      const simNum = row.sim == null ? NaN : Number(row.sim);
+      const simLabel = Number.isFinite(simNum)
+        ? `${Math.round(Math.max(0, Math.min(100, simNum <= 1 ? simNum * 100 : simNum)))}% like`
+        : (row.kind === "new" ? "new" : "-");
+      const n = Number(row.n || 0);
+      const nEv = Number(row.n_events || 0);
+      const kind = row.kind || "";
+      let sample = "";
+      if (n > 0) {
+        sample = kind === "recurring"
+          ? `${n} winners · ${nEv} event${nEv === 1 ? "" : "s"}`
+          : `${n} labeled · ${nEv} event${nEv === 1 ? "" : "s"}`;
+      } else if (kind === "new") {
+        sample = "no labeled winners yet";
+      }
       const moves = (row.moves || []).map((m) => `<li>${escapeHtml(m)}</li>`).join("");
       const past = (row.past || [])
         .slice(0, 2)
-        .map((p) => `${p.title} (${p.year}) won ${p.prize}`)
+        .map((p) => {
+          const sim = p.sim == null ? "" : ` · sim ${Number(p.sim).toFixed(2)}`;
+          const ev = p.event ? `, ${p.event}` : "";
+          return `${p.title} (${p.year}${ev})${sim} · ${p.prize}`;
+        })
         .join("; ");
       li.innerHTML = `
         <div class="card-top">
           <span class="card-title">${escapeHtml(row.name || "Untitled track")}</span>
-          <span class="card-year">${now}%${lift}</span>
+          <span class="card-year">${escapeHtml(simLabel)}</span>
         </div>
-        <span class="track-action">${escapeHtml(actionLabel[row.action] || row.action || "")}</span>
+        <span class="track-action">${escapeHtml(actionLabel[row.action] || row.action || "")}${sample ? ` · ${escapeHtml(kind)}${kind ? " · " : ""}${escapeHtml(sample)}` : ""}</span>
         ${moves ? `<ul class="track-moves">${moves}</ul>` : ""}
         ${past ? `<p class="card-tag">${escapeHtml(past)}</p>` : ""}
       `;
@@ -951,32 +1309,24 @@
   function renderProb(data) {
     probPanel.hidden = false;
     const score = scoreOf(data);
-    probNum.textContent = score == null ? "—" : String(score);
+    probNum.textContent = score == null ? "-" : String(score);
     const p = Number(data && data.probability);
     const m = (data && data.model) || {};
     const aucNum = m.auc == null ? NaN : Number(m.auc);
-    const auc = Number.isFinite(aucNum) ? aucNum.toFixed(2) : "—";
+    const auc = Number.isFinite(aucNum) ? aucNum.toFixed(2) : "-";
     if (probBase) {
       if (score == null) {
         probBase.textContent = "Finalist Score is a percentile of the calibrated classifier, not a chance of winning.";
       } else {
-        probBase.textContent = `resembles past finalists more than ${score}% of all HTN projects (2014–2025)`;
+        probBase.textContent = `Resembles past finalists more than ${score}% of all HTN projects (2014-2025).`;
       }
     }
     if (probCaveat) {
-      let cal = "—";
+      let cal = "-";
       if (Number.isFinite(p)) {
         cal = `${(Math.max(0, Math.min(1, p)) * 100).toFixed(1)}%`;
       }
-      probCaveat.textContent = `calibrated finalist probability: ${cal} · AUC ${auc} · leave-one-year-out`;
-    }
-    if (probWhy) {
-      probWhy.innerHTML = "";
-      for (const line of (data.why || [])) {
-        const li = document.createElement("li");
-        li.textContent = String(line);
-        probWhy.appendChild(li);
-      }
+      probCaveat.textContent = `Calibrated finalist probability: ${cal} · AUC ${auc} · leave-one-year-out`;
     }
     const bits = [];
     const g = data.github;
@@ -1015,7 +1365,7 @@
     const all = yearCap == null;
     const label = all ? "All years" : String(yearCap);
     const nFin = finalistsThrough(yearCap);
-    if (yearHudNum) yearHudNum.textContent = all ? "2014–2025" : String(yearCap);
+    if (yearHudNum) yearHudNum.textContent = all ? "2014-2025" : String(yearCap);
     if (yearHudSub) {
       yearHudSub.textContent = all
         ? `${fmtN(nFin)} finalists`
@@ -1167,16 +1517,17 @@
     }
     askInFlight = true;
     askBtn.disabled = true;
+    setNeighbourLoader("spin");
     if (askStatus) {
       askStatus.hidden = false;
       askStatus.classList.add("is-loading");
       askStatus.textContent = github && devpost
-        ? "Reading the repo and prize tracks…"
+        ? "Reading the repo and prize tracks..."
         : github
-          ? "Reading the repo…"
+          ? "Reading the repo..."
           : devpost
-            ? "Reading prize tracks…"
-            : "Placing your idea on twelve years of projects…";
+            ? "Reading prize tracks..."
+            : "Placing your idea on the map...";
     }
     try {
       const res = await fetch("/api/ask", {
@@ -1188,6 +1539,7 @@
       const data = await res.json();
       query = data;
       lastIdeaText = text;
+      lastGithub = github;
       pulse = 0;
       ghost = null;
       preview = null;
@@ -1199,13 +1551,15 @@
       renderNeighbours(data.neighbours || []);
       renderTracks(data.tracks);
       renderProb(data);
-      if (askResultIdea) askResultIdea.textContent = ideaSummary(text) || (github ? github : "Your idea");
+      hasPlacedOnce = true;
+      setNeighbourLoader("off");
       setAnswered(true);
       const railNorth = document.getElementById("rail-north");
       if (railNorth) railNorth.scrollTop = 0;
       if (coachPanel) {
         setCoachOpen(false);
         lastCoach = null;
+        resetPins();
         if (coachList) coachList.innerHTML = "";
         if (coachStatus) {
           coachStatus.hidden = true;
@@ -1221,9 +1575,11 @@
         if (g && g.ok) bits.push(`README + stack from ${g.full_name}`);
         else if (g && !g.ok) bits.push("Could not read that repo. Placed from the prompt");
         const t = data.tracks;
-        if (t && t.ok) bits.push(`ranked ${(t.ranked || []).length} of ${t.n} tracks`);
-        else if (t && !t.ok) bits.push(t.error || "prize tracks unread");
-        if (data.source === "elastic") bits.push("neighbours via Elasticsearch hybrid");
+        if (t && t.ok) {
+          const nRanked = (t.ranked || []).length;
+          bits.push(nRanked ? `ranked ${nRanked} of ${t.n} tracks` : "no matching prize tracks");
+        } else if (t && !t.ok) bits.push(t.error || "prize tracks unread");
+        if (data.source === "elastic") bits.push("neighbours via hybrid search");
         askStatus.classList.remove("is-loading");
         if (bits.length) {
           askStatus.hidden = false;
@@ -1235,12 +1591,16 @@
       draw();
       raf = requestAnimationFrame(tick);
     } catch (err) {
-      neighboursEmpty.hidden = false;
-      neighboursEmpty.textContent = "Could not place that idea. Try again.";
-      if (twinsEl) twinsEl.hidden = true;
+      setNeighbourLoader(hasPlacedOnce ? "off" : "idle");
+      if (!hasPlacedOnce) {
+        neighboursEmpty.hidden = false;
+        neighboursEmpty.textContent = "Could not place that idea. Try again.";
+      }
+      if (twinsEl && !hasPlacedOnce) twinsEl.hidden = true;
       if (askStatus) {
-        askStatus.hidden = true;
+        askStatus.hidden = false;
         askStatus.classList.remove("is-loading");
+        askStatus.textContent = "Could not place that idea. Try again.";
       }
       console.error(err);
     } finally {
@@ -1257,6 +1617,26 @@
         askStatus.classList.remove("is-loading");
       }
       if (input) input.focus();
+    });
+  }
+
+  const exploreView = document.getElementById("view-explore");
+  if (exploreView) {
+    exploreView.addEventListener("click", (ev) => {
+      const el = ev.target.closest("[data-devpost]");
+      if (!el) return;
+      const url = el.dataset.devpost;
+      if (!url) return;
+      openDevpost(url);
+    });
+    exploreView.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      const el = ev.target.closest("[data-devpost]");
+      if (!el || el !== ev.target) return;
+      const url = el.dataset.devpost;
+      if (!url) return;
+      ev.preventDefault();
+      openDevpost(url);
     });
   }
 
@@ -1303,7 +1683,7 @@
 
   function pctLabel(data) {
     const p = Number(data && data.probability);
-    if (!Number.isFinite(p)) return "—";
+    if (!Number.isFinite(p)) return "-";
     return `${Math.round(Math.max(0, Math.min(1, p)) * 100)}%`;
   }
 
@@ -1326,28 +1706,34 @@
   }
 
   function renderCompare(original, previewData) {
-    if (!compareEl) return;
+    if (!compareEl || !compareBody) return;
     if (!original || !previewData) {
       compareEl.hidden = true;
-      compareEl.innerHTML = "";
-      if (compareClear) compareClear.hidden = true;
+      compareBody.innerHTML = "";
       return;
     }
     const a = neighbourBits(original);
     const b = neighbourBits(previewData);
-    const col = (kicker, s) => `
+    const col = (kicker, s, extra) => `
       <div class="compare-col">
-        <p class="compare-kicker">${kicker}</p>
-        <p class="compare-stat"><strong>${escapeHtml(s.score == null ? "—" : String(s.score))}</strong> Finalist Score</p>
+        <div class="compare-col-head">
+          <p class="compare-kicker">${kicker}</p>
+          ${extra || ""}
+        </div>
+        <p class="compare-stat"><strong>${escapeHtml(s.score == null ? "-" : String(s.score))}</strong> Finalist Score</p>
         <p class="compare-stat">calibrated finalist probability: ${escapeHtml(s.pct)}</p>
         <p class="compare-stat">${escapeHtml(s.hardware)} · ${escapeHtml(s.tags)}</p>
         <p class="compare-stat">Nearest finalist: ${escapeHtml(s.nearestFin)}</p>
         <p class="compare-stat">Nearest not a finalist: ${escapeHtml(s.nearestNo)}</p>
         <p class="compare-stat">${escapeHtml(s.k)}</p>
       </div>`;
-    compareEl.innerHTML = col("Original", a) + col("Preview", b);
+    const plus = `<button type="button" class="compare-copy" id="compare-copy" aria-label="Copy new idea to paste into Place it">+</button>`;
+    compareBody.innerHTML = col("Original", a) + col("New", b, plus);
     compareEl.hidden = false;
-    if (compareClear) compareClear.hidden = false;
+  }
+
+  function hideCompare() {
+    if (compareEl) compareEl.hidden = true;
   }
 
   function clearPreview() {
@@ -1355,6 +1741,38 @@
     lastPreviewText = "";
     renderCompare(null, null);
     draw();
+  }
+
+  async function copyNewIdea(btn) {
+    const text = String(lastPreviewText || "").trim();
+    if (!text) return;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (err) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        ta.remove();
+      } catch (extra) {
+        ok = false;
+      }
+    }
+    if (!btn) return;
+    const prev = btn.textContent;
+    btn.classList.toggle("is-copied", ok);
+    btn.textContent = ok ? "✓" : "!";
+    window.setTimeout(() => {
+      btn.classList.remove("is-copied");
+      btn.textContent = prev || "+";
+    }, 1200);
   }
 
   function appendChat(role, html) {
@@ -1372,7 +1790,7 @@
     if (!framings || !framings.length) return "";
     return framings.map((f) => `
       <div class="chat-framing">
-        <p><strong>${escapeHtml(f.label || "Framing")}</strong> — ${escapeHtml(f.rationale || "")}</p>
+        <p><strong>${escapeHtml(f.label || "Framing")}</strong>: ${escapeHtml(f.rationale || "")}</p>
         <p>${escapeHtml(f.text || "")}</p>
         <button type="button" class="preview-btn" data-preview-text="${escapeHtml(f.text || "")}">Preview this idea</button>
       </div>
@@ -1393,7 +1811,7 @@
     if (chatStatus) {
       chatStatus.hidden = false;
       chatStatus.classList.add("is-loading");
-      chatStatus.textContent = "Scoring the preview…";
+      chatStatus.textContent = "Scoring the preview...";
     }
     try {
       const res = await fetch("/api/ask", {
@@ -1407,9 +1825,6 @@
       lastPreviewText = idea;
       renderCompare(query, preview);
       draw();
-      const quoted = `Finalist Score: original ${scoreOf(query) == null ? "—" : scoreOf(query)} · preview ${scoreOf(preview) == null ? "—" : scoreOf(preview)}. Calibrated probability ${pctLabel(query)} → ${pctLabel(preview)}. Chat did not invent this.`;
-      chatThread.push({ role: "assistant", content: quoted });
-      appendChat("assistant", `<p>${escapeHtml(quoted)}</p>`);
       if (chatStatus) {
         chatStatus.hidden = true;
         chatStatus.classList.remove("is-loading");
@@ -1433,7 +1848,15 @@
       previewIdea(btn.getAttribute("data-preview-text") || "");
     });
   }
-  if (compareClear) compareClear.addEventListener("click", clearPreview);
+  if (compareEl) {
+    compareEl.addEventListener("click", (ev) => {
+      const copyBtn = ev.target.closest(".compare-copy");
+      if (!copyBtn) return;
+      ev.preventDefault();
+      copyNewIdea(copyBtn);
+    });
+  }
+  if (compareClose) compareClose.addEventListener("click", hideCompare);
 
   if (chatForm) {
     chatForm.addEventListener("submit", async (ev) => {
@@ -1455,7 +1878,7 @@
       if (chatStatus) {
         chatStatus.hidden = false;
         chatStatus.classList.add("is-loading");
-        chatStatus.textContent = "Reframing…";
+        chatStatus.textContent = "Reframing...";
       }
       try {
         const res = await fetch("/api/chat", {
@@ -1468,7 +1891,7 @@
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        const reply = String(data.reply || "Chat is quiet. Place it still works.");
+        const reply = String(data.reply || "Chat could not answer. Place it still works.");
         const framings = Array.isArray(data.framings) ? data.framings : [];
         chatThread.push({ role: "assistant", content: reply });
         appendChat("assistant", `<p>${escapeHtml(reply)}</p>${renderFramings(framings)}`);
@@ -1477,11 +1900,11 @@
           chatStatus.classList.remove("is-loading");
         }
       } catch (err) {
-        appendChat("assistant", "<p>Chat is quiet. Place it still works.</p>");
+        appendChat("assistant", "<p>Chat could not answer. Place it still works.</p>");
         if (chatStatus) {
           chatStatus.hidden = false;
           chatStatus.classList.remove("is-loading");
-          chatStatus.textContent = "Chat is quiet. Place it still works.";
+          chatStatus.textContent = "Chat could not answer. Place it still works.";
         }
         console.error(err);
       } finally {
@@ -1512,7 +1935,7 @@
   function svgText(attrs, text, kind) {
     const el = svgEl("text", { ...attrs, class: `chart-${kind}` }, text);
     el.setAttribute("font-size", kind === "label" || kind === "num" ? "12" : "11");
-    el.setAttribute("font-family", kind === "tick" || kind === "num" ? "JetBrains Mono, ui-monospace, monospace" : "Fraunces, Georgia, serif");
+    el.setAttribute("font-family", kind === "tick" || kind === "num" ? "JetBrains Mono, ui-monospace, monospace" : "Castledown, sans-serif");
     return el;
   }
 
@@ -1554,7 +1977,7 @@
     box.appendChild(fig);
     const src = document.createElement("p");
     src.className = "chart-source";
-    src.textContent = source || "3,443 HTN projects, 2014–2025";
+    src.textContent = source || "3,443 HTN projects, 2014-2025";
     box.appendChild(src);
     return box;
   }
@@ -1571,7 +1994,7 @@
       return `Finalist rate by how the writeup is framed. Exclusive groups; dashed line is ${base}.`;
     }
     if (chart.id === "tech") {
-      return "Share of that year’s projects whose built-with tags match each family. LLM, blockchain, and VR/AR are the story.";
+      return "Percent of each year's submissions whose built-with tags mention that family. A project can sit on more than one line. This is not how often those projects became finalists.";
     }
     return chart.unit || "";
   }
@@ -1633,11 +2056,22 @@
     return svg;
   }
 
-  const TECH_FOCUS = ["LLM / genAI", "Blockchain / crypto", "VR / AR"];
+  const TECH_FOCUS = ["LLM / genAI", "ML / AI (classic)", "Blockchain / crypto", "VR / AR"];
   const TECH_COLOR = {
     "LLM / genAI": GOLD,
+    "ML / AI (classic)": PREVIEW,
     "Blockchain / crypto": "#8b7bb8",
     "VR / AR": "#5b8a72",
+    "Mobile": "#C47A0A",
+    "Cloud / infra": "#8A6A54",
+  };
+  const TECH_SHORT = {
+    "LLM / genAI": "LLMs",
+    "ML / AI (classic)": "Classic ML",
+    "Blockchain / crypto": "Blockchain",
+    "VR / AR": "VR/AR",
+    "Mobile": "Mobile",
+    "Cloud / infra": "Cloud",
   };
 
   function drawTech(chart) {
@@ -1647,10 +2081,10 @@
     const max = niceMax(Math.max(0.01, ...values));
     const W = 640;
     const padL = 44;
-    const padR = 118;
+    const padR = 20;
     const padT = 16;
-    const padB = 32;
-    const H = 280;
+    const padB = 72;
+    const H = 320;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const xOf = (year) => padL + ((year - years[0]) / (years[years.length - 1] - years[0] || 1)) * plotW;
@@ -1668,6 +2102,15 @@
         x: padL - 8, y: yOf(t) + 4, "text-anchor": "end",
       }, `${Math.round(t * 100)}%`, "tick"));
     }
+    if (years.includes(2022)) {
+      const x = xOf(2022);
+      svg.appendChild(svgEl("line", {
+        x1: x, x2: x, y1: padT, y2: padT + plotH, class: "chart-base",
+      }));
+      svg.appendChild(svgText({
+        x: x - 8, y: yOf(0.42), "text-anchor": "end",
+      }, "ChatGPT", "end"));
+    }
     const muted = series.filter((s) => !TECH_FOCUS.includes(s.label));
     const focused = series.filter((s) => TECH_FOCUS.includes(s.label));
     const drawSeries = (s, color, width, opacity) => {
@@ -1678,23 +2121,33 @@
       path.setAttribute("stroke", color);
       path.setAttribute("stroke-width", String(width));
       path.setAttribute("opacity", String(opacity));
+      path.setAttribute("fill", "none");
       svg.appendChild(path);
-      if (opacity < 1) return;
-      const last = pts[pts.length - 1];
-      const ly = yOf(Number(last.value) || 0);
-      const end = svgText({
-        x: xOf(last.year) + 8, y: Math.min(Math.max(ly + 4, padT + 12), padT + plotH),
-      }, s.label.replace(" / crypto", "").replace(" / genAI", "").replace(" / AR", "/AR"), "end");
-      end.style.fill = color;
-      svg.appendChild(end);
     };
-    muted.forEach((s) => drawSeries(s, FAINT, 1.25, 0.45));
+    muted.forEach((s) => drawSeries(s, TECH_COLOR[s.label] || FAINT, 1.5, 0.7));
     focused.forEach((s) => drawSeries(s, TECH_COLOR[s.label] || GOLD, 2.4, 1));
     years.forEach((y, i) => {
       if (years.length > 8 && i % 2 === 1 && i !== years.length - 1) return;
       svg.appendChild(svgText({
-        x: xOf(y), y: H - 10, "text-anchor": "middle",
+        x: xOf(y), y: padT + plotH + 18, "text-anchor": "middle",
       }, String(y), "tick"));
+    });
+    const legend = [...focused, ...muted];
+    legend.forEach((s, i) => {
+      const col = i % 3;
+      const row = Math.floor(i / 3);
+      const x = padL + col * 180;
+      const y = H - 40 + row * 18;
+      const color = TECH_COLOR[s.label] || FAINT;
+      const sw = svgEl("line", {
+        x1: x, x2: x + 16, y1: y, y2: y, class: "chart-line",
+      });
+      sw.setAttribute("stroke", color);
+      sw.setAttribute("stroke-width", TECH_FOCUS.includes(s.label) ? "2.4" : "1.5");
+      svg.appendChild(sw);
+      svg.appendChild(svgText({
+        x: x + 22, y: y + 4,
+      }, TECH_SHORT[s.label] || s.label, "label"));
     });
     return svg;
   }
@@ -1737,14 +2190,12 @@
     svg.appendChild(path);
     if (years.includes(2023)) {
       const x = xOf(2023);
-      const i23 = years.indexOf(2023);
       svg.appendChild(svgEl("line", {
         x1: x, x2: x, y1: padT, y2: padT + plotH, class: "chart-base",
       }));
-      const ann = svgText({
-        x: x + 8, y: Math.min(yOf(probs[i23] || 0) - 8, padT + plotH - 24),
-      }, "ChatGPT →", "end");
-      svg.appendChild(ann);
+      svg.appendChild(svgText({
+        x: x - 8, y: yOf(0.32), "text-anchor": "end",
+      }, "ChatGPT", "end"));
     }
     const lastI = years.length - 1;
     if (lastI >= 0) {
@@ -1754,7 +2205,7 @@
       dot.setAttribute("fill", GOLD);
       svg.appendChild(dot);
       svg.appendChild(svgText({
-        x: lx - 10, y: Math.max(ly - 10, padT + 4), "text-anchor": "end",
+        x: Math.min(lx + 10, W - 8), y: ly + 4, "text-anchor": "start",
       }, fmtPct(probs[lastI]), "num"));
     }
     years.forEach((y, i) => {
@@ -1770,7 +2221,7 @@
     let svg;
     if (chart.kind === "lines") svg = drawTech(chart);
     else svg = drawHBars(chart, meta);
-    const source = `${fmtN(meta.n)} HTN projects, 2014–2025`;
+    const source = `${fmtN(meta.n)} HTN projects, 2014-2025`;
     const card = insightCard(chart.claim, contextFor(chart, meta), svg, source);
     if (chart.kind === "lines" || chart.id === "framing") card.classList.add("chart-wide");
     chartsEl.appendChild(card);
@@ -1778,8 +2229,16 @@
 
   function appendAiChart(ai, meta) {
     const { svg, nPerYear } = drawAi(ai);
-    const context = `Mean GPTZero AI-likelihood on writeups — not “share of projects built with AI”. ${fmtN(nPerYear)} sampled writeups per year.`;
-    const source = `class_probabilities.ai · ${fmtN(nPerYear)}/year · ${fmtN(meta.n)} labelled projects`;
+    const years = ai.years || [];
+    const lastI = years.length - 1;
+    const shares = ai.share_ge_50 || [];
+    const share = lastI >= 0 ? Number(shares[lastI]) : NaN;
+    const lastYear = lastI >= 0 ? years[lastI] : "";
+    const shareBit = Number.isFinite(share)
+      ? ` In ${lastYear}, ${Math.round(share * 100)}% of those writeups scored 50% or higher.`
+      : "";
+    const context = `Mean GPTZero score on Devpost writeups, ${fmtN(nPerYear)} sampled per year. This is the gallery text, not whether the team coded with an agent.${shareBit}`;
+    const source = `GPTZero on ${fmtN(nPerYear)} writeups/year · ${fmtN(meta.n)} labelled projects`;
     const card = insightCard(ai.claim, context, svg, source);
     card.classList.add("chart-wide");
     chartsEl.appendChild(card);
@@ -1790,7 +2249,7 @@
       const res = await fetch("/api/findings");
       const data = await res.json();
       if (data.source === "sample") {
-        findingsNote.textContent = "Sample claims until Richa ships data/findings.json.";
+        findingsNote.textContent = "Showing sample findings until the live file is in place.";
       } else {
         findingsNote.textContent = "";
       }
@@ -1817,7 +2276,9 @@
       }
       indexMapPoints();
       const cfg = await cfgRes.json();
-      corpusMeta.textContent = `${fmtN(cfg.n)} projects  ·  ${fmtN(cfg.n_finalists)} finalists  ·  ${cfg.source || "corpus"}`;
+      if (corpusMeta) {
+        corpusMeta.textContent = `${fmtN(cfg.n)} projects  ·  ${fmtN(cfg.n_finalists)} finalists  ·  ${cfg.source || "corpus"}`;
+      }
       updateScrubber();
       updateZoomUi();
       if (cfg.sentry_dsn) {
@@ -1845,7 +2306,7 @@
         document.head.appendChild(s);
       }
     } catch (err) {
-      corpusMeta.textContent = "Could not load the map.";
+      if (corpusMeta) corpusMeta.textContent = "Could not load the map.";
       console.error(err);
       indexMapPoints();
     }
