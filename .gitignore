@@ -8,7 +8,7 @@ data/emb_cache.json
 data/tracks_cache.json
 data/gptzero_cache.json
 data/*.npy
-data/model.pkl
+!data/embeddings.npy
 data/phase_*.log
 *.egg-info/
 .sentry-native/

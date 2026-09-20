@@ -9,10 +9,11 @@ Never call this from a request handler.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
-from pathlib import Path
+import time
 
 import joblib
 import numpy as np
@@ -27,12 +28,13 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from engine import DATA, EMB_PATH, MAP_PATH, MODEL_PATH, _bounds, _finalist_proba, _point_payload, _structured_features
-from schema import load_corpus
+from schema import CORPUS_PATH, ROOT, load_corpus, load_explore_corpus
 
 load_dotenv()
 
 CACHE_PATH = DATA / "emb_cache.json"
-BATCH = 100
+BATCH = 64
+EMBED_RETRIES = 3
 
 
 def _cache_load() -> dict[str, list[float]]:
@@ -46,6 +48,16 @@ def _cache_save(cache: dict[str, list[float]]) -> None:
     CACHE_PATH.write_text(json.dumps(cache), encoding="utf-8")
 
 
+def _embed_input(project) -> str:
+    text = (project.embed_text() or "").strip()
+    return text if text else (project.slug or "project")
+
+
+def _cache_dim(cache: dict[str, list[float]]) -> int:
+    sample = next(iter(cache.values()), None)
+    return len(sample) if isinstance(sample, list) else 0
+
+
 def embed_projects(projects) -> np.ndarray:
     cache = _cache_load()
     missing = [p for p in projects if p.slug not in cache]
@@ -54,12 +66,17 @@ def embed_projects(projects) -> np.ndarray:
         from sklearn.feature_extraction.text import TfidfVectorizer
 
         vec = TfidfVectorizer(max_features=512)
-        arr = vec.fit_transform([p.embed_text() for p in projects]).toarray().astype(np.float32)
+        arr = vec.fit_transform([_embed_input(p) for p in projects]).toarray().astype(np.float32)
         np.save(EMB_PATH, arr)
         print(f"Wrote TF-IDF {EMB_PATH} {arr.shape}")
         return arr
 
     if missing and not key:
+        if _cache_dim(cache) >= 100:
+            raise RuntimeError(
+                f"{len(missing)} slugs need embeddings but OPENAI_API_KEY is unset. "
+                "Not overwriting the OpenAI cache with TF-IDF."
+            )
         print("No OPENAI_API_KEY; writing TF-IDF embeddings so the rest of the pipeline can run.")
         return _tfidf()
 
@@ -75,25 +92,150 @@ def embed_projects(projects) -> np.ndarray:
         try:
             for i in range(0, len(missing), BATCH):
                 batch = missing[i : i + BATCH]
-                resp = client.embeddings.create(
-                    model="text-embedding-3-small",
-                    input=[p.embed_text() for p in batch],
-                )
-                for p, item in zip(batch, resp.data):
-                    cache[p.slug] = list(item.embedding)
-                _cache_save(cache)
+                last_err: Exception | None = None
+                for attempt in range(EMBED_RETRIES):
+                    try:
+                        resp = client.embeddings.create(
+                            model="text-embedding-3-small",
+                            input=[_embed_input(p) for p in batch],
+                        )
+                        ordered = sorted(resp.data, key=lambda item: int(getattr(item, "index", 0)))
+                        for p, item in zip(batch, ordered):
+                            cache[p.slug] = list(item.embedding)
+                        _cache_save(cache)
+                        last_err = None
+                        break
+                    except Exception as exc:
+                        last_err = exc
+                        wait = 2 ** attempt
+                        print(f"  batch {i // BATCH + 1} attempt {attempt + 1} failed ({exc}); retry in {wait}s")
+                        time.sleep(wait)
+                if last_err is not None:
+                    raise last_err
                 print(f"  {min(i + BATCH, len(missing))}/{len(missing)}")
         except Exception as e:
+            if _cache_dim(cache) >= 100:
+                still = sum(1 for p in projects if p.slug not in cache)
+                raise RuntimeError(
+                    f"OpenAI embed failed ({e}); {still} slugs still missing. "
+                    "Cached OpenAI vectors were kept."
+                ) from e
             print(f"OpenAI embed failed ({e}); falling back to TF-IDF.")
             return _tfidf()
 
-    dim = len(next(iter(cache.values())))
+    still = [p.slug for p in projects if p.slug not in cache]
+    if still:
+        raise RuntimeError(f"{len(still)} slugs still missing from emb_cache.json")
+
+    dim = _cache_dim(cache)
     arr = np.zeros((len(projects), dim), dtype=np.float32)
     for i, p in enumerate(projects):
         arr[i] = np.array(cache[p.slug], dtype=np.float32)
     np.save(EMB_PATH, arr)
     print(f"Wrote {EMB_PATH} {arr.shape}")
     return arr
+
+
+def place_unmapped(projects, embeddings: np.ndarray) -> None:
+    """Keep the HTN UMAP. Sit extra-event rows in that space with the saved reducer."""
+    if not MAP_PATH.exists():
+        print("map.json missing — skip extra-event placement")
+        return
+    payload = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+    points = list(payload.get("points") or [])
+    by_slug = {str(pt.get("slug") or ""): pt for pt in points if pt and pt.get("slug")}
+    index = {p.slug: i for i, p in enumerate(projects)}
+    for p in projects:
+        rec = by_slug.get(p.slug)
+        if rec is None:
+            continue
+        rec["event"] = p.event or rec.get("event") or ""
+        rec["title"] = str(p.title or rec.get("title") or "")
+        rec["year"] = int(p.year or rec.get("year") or 0)
+        rec["finalist"] = bool(p.finalist)
+        rec["tagline"] = str(p.tagline or rec.get("tagline") or "")
+
+    missing_i = [i for i, p in enumerate(projects) if p.slug not in by_slug]
+    if not missing_i:
+        xs = [float(pt.get("x") or 0) for pt in points]
+        ys = [float(pt.get("y") or 0) for pt in points]
+        payload["points"] = points
+        payload["bounds"] = _bounds(xs, ys) if xs else payload.get("bounds") or {}
+        MAP_PATH.write_text(json.dumps(payload), encoding="utf-8")
+        print(f"map.json already has every explore slug ({len(points)} points)")
+        return
+
+    arr = np.nan_to_num(np.asarray(embeddings, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    reducer = None
+    if MODEL_PATH.exists():
+        try:
+            reducer = joblib.load(MODEL_PATH).get("reducer")
+        except Exception as extra:
+            print(f"reducer load skipped ({extra})")
+            reducer = None
+
+    coords = None
+    placed = "ridge"
+    if reducer is not None:
+        try:
+            coords = np.asarray(reducer.transform(arr[missing_i]), dtype=float)
+            placed = "umap"
+            print(f"UMAP-transformed {len(missing_i)} extra-event projects onto the HTN map")
+        except Exception as extra:
+            print(f"UMAP transform skipped ({extra})")
+            coords = None
+
+    if coords is None:
+        from sklearn.linear_model import Ridge
+
+        rows: list[int] = []
+        xy: list[list[float]] = []
+        for slug, rec in by_slug.items():
+            i = index.get(slug)
+            if i is None:
+                continue
+            try:
+                rows.append(i)
+                xy.append([float(rec["x"]), float(rec["y"])])
+            except (KeyError, TypeError, ValueError):
+                continue
+        if len(rows) < 20:
+            print("not enough mapped points to place extra-event projects")
+            return
+        model = Ridge(alpha=10.0)
+        model.fit(arr[rows], np.asarray(xy, dtype=float))
+        coords = np.asarray(model.predict(arr[missing_i]), dtype=float)
+        print(f"Ridge-projected {len(missing_i)} extra-event projects onto the HTN map")
+
+    known_i = [index[slug] for slug in by_slug if slug in index]
+    cluster_ids = [0] * len(missing_i)
+    cluster_labels = ["theme 0"] * len(missing_i)
+    if known_i:
+        known = arr[known_i]
+        miss = arr[missing_i]
+        known = known / (np.linalg.norm(known, axis=1, keepdims=True) + 1e-9)
+        miss = miss / (np.linalg.norm(miss, axis=1, keepdims=True) + 1e-9)
+        nn = np.argmax(miss @ known.T, axis=1)
+        for k, j in enumerate(nn):
+            src = by_slug[projects[known_i[int(j)]].slug]
+            cluster_ids[k] = int(src.get("cluster_id") or 0)
+            cluster_labels[k] = str(src.get("cluster_label") or "theme 0")
+
+    added = 0
+    for k, i in enumerate(missing_i):
+        rec = _point_payload(projects[i], float(coords[k][0]), float(coords[k][1]))
+        rec["cluster_id"] = int(cluster_ids[k])
+        rec["cluster_label"] = str(cluster_labels[k])
+        rec["placed"] = placed
+        points.append(rec)
+        added += 1
+
+    xs = [float(pt.get("x") or 0) for pt in points]
+    ys = [float(pt.get("y") or 0) for pt in points]
+    payload["points"] = points
+    payload["bounds"] = _bounds(xs, ys) if xs else payload.get("bounds") or {}
+    MAP_PATH.write_text(json.dumps(payload), encoding="utf-8")
+    print(f"Wrote {MAP_PATH} ({len(points)} points, +{added} extra-event)")
 
 
 N_THEMES = 10
@@ -420,23 +562,58 @@ def train(projects, embeddings: np.ndarray):
     return blob
 
 
-def main() -> int:
+def _htn_slice(explore, embeddings: np.ndarray):
+    """Hack the North rows only. Finalist Score stays the museum model."""
+    htn_path = ROOT / CORPUS_PATH
+    if not htn_path.exists():
+        return [], None
+    htn = load_corpus(htn_path)
+    index = {p.slug: i for i, p in enumerate(explore)}
+    keep = [p for p in htn if p.slug in index]
+    if not keep:
+        return [], None
+    arr = np.stack([embeddings[index[p.slug]] for p in keep]).astype(np.float32)
+    return keep, arr
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Embed the explore corpus and rebuild artifacts.")
+    parser.add_argument(
+        "--no-train",
+        action="store_true",
+        help="Keep the existing HTN classifier; still embed extras and refresh the map/index.",
+    )
+    args = parser.parse_args(argv)
+
     DATA.mkdir(parents=True, exist_ok=True)
-    projects = load_corpus()
-    print(f"Corpus: {len(projects)} rows, {sum(p.finalist for p in projects)} finalists")
-    embeddings = embed_projects(projects)
-    clusters = cluster_themes(projects, embeddings)
+    explore = load_explore_corpus()
+    print(f"Explore corpus: {len(explore)} rows")
+    embeddings = embed_projects(explore)
+    htn, htn_emb = _htn_slice(explore, embeddings)
+    print(f"HTN classifier corpus: {len(htn)} rows")
+
     try:
         from elastic import index_projects
 
-        index_projects(projects, embeddings)
+        index_projects(explore, embeddings)
     except Exception as e:
         print(f"Elasticsearch index skipped ({e})")
-    reducer, _ = reduce_map(projects, embeddings, clusters)
-    blob = train(projects, embeddings)
+
+    if args.no_train and MODEL_PATH.exists() and MAP_PATH.exists():
+        place_unmapped(explore, embeddings)
+        print("Kept existing HTN classifier. Extra events now use the shared embedding cache.")
+        return 0
+
+    train_projects = htn or explore
+    train_emb = htn_emb if htn_emb is not None else embeddings
+    print(f"Training Finalist Score on {len(train_projects)} HTN rows")
+    clusters = cluster_themes(train_projects, train_emb)
+    reducer, _ = reduce_map(train_projects, train_emb, clusters)
+    blob = train(train_projects, train_emb)
     blob["reducer"] = reducer
     joblib.dump(blob, MODEL_PATH)
     print(f"Wrote {MODEL_PATH}  auc={blob['auc']} spread={blob['auc_spread']} p_ref={len(blob['p_ref'])}")
+    place_unmapped(explore, embeddings)
     return 0
 
 

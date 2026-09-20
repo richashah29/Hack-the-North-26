@@ -24,7 +24,15 @@ from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from schema import CORPUS_PATH, MULTI_CORPUS_PATH, Project, ROOT, load_corpus, load_explore_corpus
+from schema import (
+    CORPUS_PATH,
+    LABELLED_YEARS,
+    MULTI_CORPUS_PATH,
+    Project,
+    ROOT,
+    load_corpus,
+    load_explore_corpus,
+)
 
 DATA = ROOT / "data"
 
@@ -429,6 +437,11 @@ class Engine:
         self.source = "sample.json"
         self.embeddings_norm: np.ndarray | None = None
         self.p_ref: np.ndarray = np.array([], dtype=np.float64)
+        self.pool_clf: Any = None
+        self.pool_pca: PCA | None = None
+        self.pool_meta: dict[str, Any] = {}
+        self.row_score_htn: np.ndarray = np.array([], dtype=np.float64)
+        self.row_score_pool: np.ndarray = np.array([], dtype=np.float64)
         self._search_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._facts_block: str | None = None
         self._title_index: list[str] | None = None
@@ -468,6 +481,7 @@ class Engine:
                 print("artifact model.pkl missing — scoring from corpus signals only")
         self._assert_aligned()
         self._ensure_p_ref()
+        self._fit_event_scorer()
         n = len(self.projects)
         n_emb = 0 if self.emb_ok is None else int(np.asarray(self.emb_ok).sum())
         n_map = len((self.map_data or {}).get("points") or [])
@@ -655,17 +669,34 @@ class Engine:
     def _project_extra_points(
         self, extra: list[Project], known: dict[str, dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Drop extra events onto the HTN UMAP using a TF-IDF to (x, y) map."""
+        """Drop extra events onto the HTN UMAP. Prefer OpenAI space, else TF-IDF."""
         if not extra:
             return []
-        if self.tfidf is None or self.vectorizer is None:
-            return [self._jitter_point(p) for p in extra]
         index = {p.slug: i for i, p in enumerate(self.projects)}
+        placed = self._project_extra_ridge(extra, known, index, space="openai")
+        if placed is not None:
+            return placed
+        placed = self._project_extra_ridge(extra, known, index, space="tfidf")
+        if placed is not None:
+            return placed
+        return [self._jitter_point(p) for p in extra]
+
+    def _project_extra_ridge(
+        self,
+        extra: list[Project],
+        known: dict[str, dict[str, Any]],
+        index: dict[str, int],
+        *,
+        space: str,
+    ) -> list[dict[str, Any]] | None:
         rows: list[int] = []
         xy: list[list[float]] = []
+        ok = np.asarray(self.emb_ok, dtype=bool) if self.emb_ok is not None else None
         for slug, rec in known.items():
             i = index.get(slug)
             if i is None:
+                continue
+            if space == "openai" and (ok is None or i >= ok.size or not bool(ok[i])):
                 continue
             try:
                 rows.append(i)
@@ -673,27 +704,50 @@ class Engine:
             except (KeyError, TypeError, ValueError):
                 continue
         if len(rows) < 20:
-            return [self._jitter_point(p) for p in extra]
+            return None
         try:
             from sklearn.linear_model import Ridge
 
+            if space == "openai":
+                if self.embeddings is None:
+                    return None
+                features = np.nan_to_num(
+                    np.asarray(self.embeddings, dtype=float)[rows], nan=0.0, posinf=0.0, neginf=0.0
+                )
+            else:
+                if self.tfidf is None:
+                    return None
+                features = self.tfidf[rows].toarray()
             model = Ridge(alpha=10.0)
-            model.fit(self.tfidf[rows].toarray(), np.asarray(xy, dtype=float))
+            model.fit(features, np.asarray(xy, dtype=float))
             out: list[dict[str, Any]] = []
             for p in extra:
                 i = index.get(p.slug)
                 if i is None:
                     out.append(self._jitter_point(p))
                     continue
-                pred = model.predict(self.tfidf[i].toarray())[0]
+                if space == "openai":
+                    if ok is None or i >= ok.size or not bool(ok[i]):
+                        out.append(self._jitter_point(p))
+                        continue
+                    pred = model.predict(
+                        np.nan_to_num(
+                            np.asarray(self.embeddings[i], dtype=float).reshape(1, -1),
+                            nan=0.0,
+                            posinf=0.0,
+                            neginf=0.0,
+                        )
+                    )[0]
+                else:
+                    pred = model.predict(self.tfidf[i].toarray())[0]
                 rec = _point_payload(p, float(pred[0]), float(pred[1]))
-                rec["placed"] = "tfidf"
+                rec["placed"] = space
                 out.append(rec)
-            print(f"projected {len(out)} extra-event projects onto the HTN map via TF-IDF")
+            print(f"projected {len(out)} extra-event projects onto the HTN map via {space}")
             return out
         except Exception as extra_exc:
-            print(f"extra-event map projection skipped ({extra_exc})")
-            return [self._jitter_point(p) for p in extra]
+            print(f"extra-event {space} projection skipped ({extra_exc})")
+            return None
 
     def _jitter_point(self, project: Project) -> dict[str, Any]:
         h = int(hashlib.md5(project.slug.encode()).hexdigest()[:8], 16) % 1000 / 1000.0
@@ -831,8 +885,169 @@ class Engine:
             print(f"p_ref compute skipped ({extra})")
             return np.array([], dtype=np.float64)
 
-    def percentile_score(self, p: float) -> int:
-        return percentile_rank(p, self.p_ref)
+    def percentile_score(self, p: float, events: list[str] | tuple[str, ...] | None = None) -> int:
+        dist = self._p_ref_for(events)
+        return percentile_rank(p, dist)
+
+    def _htn_only(self, events: list[str] | tuple[str, ...] | None) -> bool:
+        return self.normalize_events(events) == (DEFAULT_EVENT,)
+
+    def _score_scope(self, events: list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
+        fam = self.normalize_events(events)
+        idx = self._indices_for(fam)
+        labelled = [
+            self.projects[int(i)]
+            for i in idx
+            if int(self.projects[int(i)].year) in LABELLED_YEARS
+        ]
+        return {
+            "events": list(fam),
+            "n": int(idx.size),
+            "n_labelled": sum(1 for p in labelled if p.finalist),
+            "htn_only": fam == (DEFAULT_EVENT,),
+            "label": "finalist" if fam == (DEFAULT_EVENT,) else "winner",
+        }
+
+    def _head_for(self, events: list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
+        blob = self.model_blob or {}
+        htn_ok = (
+            self._htn_only(events)
+            and blob.get("model") is not None
+            and blob.get("pca") is not None
+        )
+        if htn_ok:
+            return {
+                "clf": blob.get("model"),
+                "pca": blob.get("pca"),
+                "row": self.row_score_htn,
+                "meta": blob,
+                "htn_only": True,
+            }
+        if self.pool_clf is not None and self.pool_pca is not None:
+            return {
+                "clf": self.pool_clf,
+                "pca": self.pool_pca,
+                "row": self.row_score_pool,
+                "meta": self.pool_meta,
+                "htn_only": False,
+            }
+        return {
+            "clf": blob.get("model"),
+            "pca": blob.get("pca"),
+            "row": self.row_score_htn if getattr(self.row_score_htn, "size", 0) else self.row_score_pool,
+            "meta": blob,
+            "htn_only": self._htn_only(events),
+        }
+
+    def _p_ref_for(self, events: list[str] | tuple[str, ...] | None = None) -> np.ndarray:
+        idx = self._indices_for(events)
+        row = self._head_for(events).get("row")
+        if row is not None and getattr(row, "size", 0) == len(self.projects) and idx.size:
+            dist = np.asarray(row, dtype=np.float64)[idx]
+            dist = dist[np.isfinite(dist)]
+            if dist.size:
+                return np.sort(dist)
+        return self.p_ref
+
+    def _score_rows(
+        self,
+        clf,
+        pca,
+        idx: np.ndarray | None = None,
+    ) -> np.ndarray:
+        n = len(self.projects)
+        out = np.full(n, np.nan, dtype=np.float64)
+        if clf is None or pca is None or self.embeddings is None or n == 0:
+            return out
+        if idx is None:
+            take = np.arange(n, dtype=int)
+        else:
+            take = np.asarray(idx, dtype=int)
+        if self.emb_ok is not None and int(self.emb_ok.shape[0]) == n:
+            take = take[np.asarray(self.emb_ok, dtype=bool)[take]]
+        if take.size == 0:
+            return out
+        try:
+            emb = np.nan_to_num(
+                np.asarray(self.embeddings, dtype=float)[take], nan=0.0, posinf=0.0, neginf=0.0
+            )
+            reduced = pca.transform(emb)
+            struct = np.array([_structured_features(self.projects[int(i)]) for i in take], dtype=float)
+            x = np.hstack([reduced, struct])
+            out[take] = _finalist_proba(clf, x)
+        except Exception as extra:
+            print(f"row scores skipped ({extra})")
+        return out
+
+    def _fit_event_scorer(self) -> None:
+        n = len(self.projects)
+        self.row_score_htn = np.full(n, np.nan, dtype=np.float64)
+        self.row_score_pool = np.full(n, np.nan, dtype=np.float64)
+        blob = self.model_blob or {}
+        if blob.get("model") is not None and blob.get("pca") is not None:
+            self.row_score_htn = self._score_rows(blob.get("model"), blob.get("pca"))
+        self._fit_pool_classifier()
+
+    def _fit_pool_classifier(self) -> None:
+        """Train on every labelled event. `finalist` is museum for HTN and won-prize elsewhere."""
+        if self.embeddings is None or len(self.projects) < 80:
+            return
+        labelled = [
+            i
+            for i, p in enumerate(self.projects)
+            if int(p.year) in LABELLED_YEARS
+        ]
+        if self.emb_ok is not None and int(self.emb_ok.shape[0]) == len(self.projects):
+            labelled = [i for i in labelled if bool(self.emb_ok[i])]
+        if len(labelled) < 80:
+            return
+        y = np.array([1 if self.projects[i].finalist else 0 for i in labelled], dtype=int)
+        if int(y.sum()) == 0 or int(y.sum()) == len(y):
+            return
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.pipeline import Pipeline
+            from sklearn.preprocessing import StandardScaler
+
+            emb = np.nan_to_num(
+                np.asarray(self.embeddings, dtype=float)[labelled], nan=0.0, posinf=0.0, neginf=0.0
+            )
+            n_pca = min(50, emb.shape[0] - 1, emb.shape[1])
+            n_pca = max(2, n_pca)
+            pca = PCA(n_components=n_pca, random_state=7)
+            reduced = pca.fit_transform(emb)
+            struct = np.array([_structured_features(self.projects[i]) for i in labelled], dtype=float)
+            x = np.hstack([reduced, struct])
+            pipe = Pipeline(
+                [
+                    ("scale", StandardScaler()),
+                    ("clf", LogisticRegression(class_weight="balanced", max_iter=400)),
+                ]
+            )
+            try:
+                model = CalibratedClassifierCV(pipe, method="isotonic", cv=min(3, max(2, int(y.sum()))))
+                model.fit(x, y)
+            except Exception as extra:
+                print(f"pool calibration skipped ({extra})")
+                pipe.fit(x, y)
+                model = pipe
+            self.pool_clf = model
+            self.pool_pca = pca
+            self.pool_meta = {
+                "auc": None,
+                "auc_spread": [],
+                "n_train": int(len(labelled)),
+                "n_finalists": int(y.sum()),
+                "winner": "logreg_pool",
+            }
+            self.row_score_pool = self._score_rows(model, pca)
+            print(
+                f"pooled scorer n={len(labelled)} labelled={int(y.sum())} "
+                f"scored={int(np.isfinite(self.row_score_pool).sum())}"
+            )
+        except Exception as extra:
+            print(f"pooled scorer skipped ({extra})")
 
     def _map_from_fallback(self) -> dict[str, Any]:
         assert self.fallback_coords is not None
@@ -1369,43 +1584,54 @@ class Engine:
         embed_vec: np.ndarray | None,
         signals: dict[str, Any],
         struct: list[float] | np.ndarray | None = None,
+        events: list[str] | tuple[str, ...] | None = None,
     ) -> tuple[float | None, dict[str, Any]]:
+        scope = self._score_scope(events)
         meta = {
             "auc": None,
             "auc_spread": [],
-            "n_train": len(self.projects),
-            "n_finalists": sum(1 for p in self.projects if p.finalist),
+            "n_train": int(scope["n"]),
+            "n_finalists": int(scope["n_labelled"]),
+            "htn_only": bool(scope["htn_only"]),
+            "score_events": list(scope["events"]),
         }
-        if not self.model_blob:
-            return None, json_safe(meta)
-        auc = self.model_blob.get("auc")
+        head = self._head_for(events)
+        src = head.get("meta") or {}
+        auc = src.get("auc")
         try:
             auc_f = float(auc) if auc is not None else None
         except (TypeError, ValueError):
             auc_f = None
         if auc_f is not None and (auc_f != auc_f or auc_f < 0.4 or auc_f > 1.0):
             auc_f = None
-        spread_raw = self.model_blob.get("auc_spread") or []
+        if not head.get("htn_only"):
+            auc_f = None
+        spread_raw = src.get("auc_spread") or []
         spread = []
         for s in spread_raw:
             try:
                 spread.append(round(float(s), 3))
             except (TypeError, ValueError):
                 continue
+        if not head.get("htn_only"):
+            spread = []
         meta.update(
             {
                 "auc": None if auc_f is None else round(float(auc_f), 3),
                 "auc_spread": spread,
-                "n_train": int(self.model_blob.get("n_train", meta["n_train"]) or meta["n_train"]),
-                "n_finalists": int(self.model_blob.get("n_finalists", meta["n_finalists"]) or meta["n_finalists"]),
+                "n_train": int(src.get("n_train", meta["n_train"]) or meta["n_train"]),
+                "n_finalists": int(src.get("n_finalists", meta["n_finalists"]) or meta["n_finalists"]),
             }
         )
-        clf = self.model_blob.get("model")
-        pca = self.model_blob.get("pca")
+        if not head.get("htn_only"):
+            meta["n_train"] = int(scope["n"])
+            meta["n_finalists"] = int(scope["n_labelled"])
+        clf = head.get("clf")
+        pca = head.get("pca")
         if clf is None:
-            return None, meta
+            return None, json_safe(meta)
         if embed_vec is None or pca is None:
-            return None, meta
+            return None, json_safe(meta)
         try:
             reduced = pca.transform(embed_vec.reshape(1, -1))
             if struct is None:
@@ -1414,7 +1640,6 @@ class Engine:
                 struct_arr = np.asarray(struct, dtype=float).reshape(1, -1)
             x = np.hstack([reduced, struct_arr])
             proba = clf.predict_proba(x)[0]
-            # class 1 = finalist if present
             classes = list(getattr(clf, "classes_", [0, 1]))
             if 1 in classes:
                 idx = classes.index(1)
@@ -1503,11 +1728,10 @@ class Engine:
             assert self.vectorizer is not None
             embed_vec = self.vectorizer.transform([document]).toarray()[0]
 
-        n = max(1, len(self.projects))
-        clf_prob, model_meta = self._probability(embed_vec, signals)
-        htn = [self.projects[int(i)] for i in self._indices_for([DEFAULT_EVENT])] or self.projects
-        signal_prob, why = score_from_signals(htn, signals)
-        if len(htn) >= 80 and clf_prob is not None:
+        clf_prob, model_meta = self._probability(embed_vec, signals, events=events)
+        subset = [self.projects[int(i)] for i in idx] or self.projects
+        signal_prob, why = score_from_signals(subset, signals)
+        if len(subset) >= 80 and clf_prob is not None:
             prob = 0.7 * float(clf_prob) + 0.3 * signal_prob
             why = ["classifier on stack/hardware signals + text"] + why
         else:
@@ -1592,7 +1816,8 @@ class Engine:
                 "point": point,
                 "neighbours": self.neighbour_records(pairs),
                 "probability": round(finite_unit(prob), 4),
-                "score": self.percentile_score(prob),
+                "score": self.percentile_score(prob, events),
+                "score_scope": self._score_scope(events),
                 "model": model_meta,
                 "backend": used,
                 "source": source,
@@ -1613,11 +1838,14 @@ class Engine:
         signals: dict[str, Any],
         struct: list[float] | np.ndarray | None = None,
         baseline_clf: float | None = None,
+        events: list[str] | tuple[str, ...] | None = None,
     ) -> float:
         """Same blend /api/ask uses. struct is only set for coach moves."""
-        n = max(1, len(self.projects))
-        clf_prob, _ = self._probability(embed_vec, signals, struct=struct)
-        signal_prob, _ = score_from_signals(self.projects, signals)
+        idx = self._indices_for(events)
+        subset = [self.projects[int(i)] for i in idx] or self.projects
+        n = max(1, len(subset))
+        clf_prob, _ = self._probability(embed_vec, signals, struct=struct, events=events)
+        signal_prob, _ = score_from_signals(subset, signals)
         if n >= 80 and clf_prob is not None:
             prob = 0.7 * float(clf_prob) + 0.3 * signal_prob
         else:
@@ -1756,7 +1984,13 @@ class Engine:
         )
         return _parse_coach_moves(self._gemini_raw(system, user))
 
-    def coach(self, idea: str, time_budget_hours: float | None = None, github: str = "") -> dict[str, Any]:
+    def coach(
+        self,
+        idea: str,
+        time_budget_hours: float | None = None,
+        github: str = "",
+        events: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
         """Propose 3–4 moves. Probabilities come from the classifier, never Gemini.
 
         Feasibility is clock math on this process, not a Gemini decision.
@@ -1781,9 +2015,9 @@ class Engine:
         elif self.model_blob and self.model_blob.get("embed_space") == "tfidf":
             assert self.vectorizer is not None
             embed_vec = self.vectorizer.transform([document]).toarray()[0]
-        baseline_clf, _ = self._probability(embed_vec, signals)
-        baseline = self._score_like_ask(embed_vec, signals)
-        baseline_score = self.percentile_score(baseline)
+        baseline_clf, _ = self._probability(embed_vec, signals, events=events)
+        baseline = self._score_like_ask(embed_vec, signals, events=events)
+        baseline_score = self.percentile_score(baseline, events)
         out: dict[str, Any] = {
             "baseline": round(finite_unit(baseline), 4),
             "baseline_score": baseline_score,
@@ -1867,6 +2101,7 @@ class Engine:
                     baseline_clf,
                     baseline_score,
                     budget,
+                    events=events,
                 )
             )
         moves = [m for m in moves if abs(int(m.get("score_delta") or 0)) >= 1]
@@ -1887,6 +2122,7 @@ class Engine:
         baseline_clf: float | None,
         baseline_score: int,
         budget: float,
+        events: list[str] | tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         spec = _enrich_coach_features(spec, signals)
         feats = spec.get("features") or {}
@@ -1916,9 +2152,9 @@ class Engine:
         # was collapsing every rec to ~1 percentile (or randomly tanking it).
         score_vec = embed_vec if embed_vec is not None else vec
         new_prob = self._score_like_ask(
-            score_vec, move_signals, struct=struct, baseline_clf=baseline_clf
+            score_vec, move_signals, struct=struct, baseline_clf=baseline_clf, events=events
         )
-        new_score = self.percentile_score(new_prob)
+        new_score = self.percentile_score(new_prob, events)
         xy = self._openai_point(vec) if vec is not None else None
         if xy is None and self.fallback_pca is not None:
             try:
@@ -1956,6 +2192,7 @@ class Engine:
         specs: list[dict[str, Any]],
         github: str = "",
         time_budget_hours: float | None = None,
+        events: list[str] | tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         """Rescore a pin-stack of coach moves as one combined idea. No Gemini."""
         from github_repo import compose_embed_text
@@ -1972,9 +2209,9 @@ class Engine:
         except Exception as exc:
             print(f"coach stack embed skipped ({exc})")
             embed_vec = None
-        baseline_clf, _ = self._probability(embed_vec, signals)
-        baseline = self._score_like_ask(embed_vec, signals)
-        baseline_score = self.percentile_score(baseline)
+        baseline_clf, _ = self._probability(embed_vec, signals, events=events)
+        baseline = self._score_like_ask(embed_vec, signals, events=events)
+        baseline_score = self.percentile_score(baseline, events)
         clock = {
             "baseline": round(finite_unit(baseline), 4),
             "baseline_score": baseline_score,
@@ -2014,6 +2251,7 @@ class Engine:
             baseline_clf,
             baseline_score,
             budget,
+            events=events,
         )
         try:
             _vec, point = self._embed_document(combined["reframed_description"])

@@ -283,7 +283,8 @@ def api_ask(body: AskBody) -> JSONResponse:
                         "point": {"x": float(xy[0]), "y": float(xy[1])},
                         "neighbours": engine.neighbour_records(pairs),
                         "probability": round(n_f / n, 4),
-                        "score": engine.percentile_score(n_f / n),
+                        "score": engine.percentile_score(n_f / n, body.events),
+                        "score_scope": engine._score_scope(body.events),
                         "model": {
                             "auc": None,
                             "auc_spread": [],
@@ -322,7 +323,7 @@ def api_coach(body: CoachBody) -> JSONResponse:
     if not text:
         raise HTTPException(status_code=400, detail="provide a description")
     try:
-        return JSONResponse(json_safe(engine.coach(text, time_budget_hours=body.time_budget_hours, github=body.github)))
+        return JSONResponse(json_safe(engine.coach(text, time_budget_hours=body.time_budget_hours, github=body.github, events=body.events)))
     except Exception as exc:
         print(f"coach failed ({exc})")
         remaining = hours_until_build_end()
@@ -364,6 +365,7 @@ def api_coach_stack(body: CoachStackBody) -> JSONResponse:
                     specs,
                     github=body.github,
                     time_budget_hours=body.time_budget_hours,
+                    events=body.events,
                 )
             )
         )
