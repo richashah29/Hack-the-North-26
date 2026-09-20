@@ -1521,8 +1521,25 @@
 
   function renderEventToggles() {
     if (!eventToggles || !eventTogglesRow) return;
-    eventToggles.hidden = true;
     eventTogglesRow.innerHTML = "";
+    // Nothing to choose between when there is only one corpus loaded.
+    if (eventCatalog.length < 2) {
+      eventToggles.hidden = true;
+      return;
+    }
+    eventToggles.hidden = false;
+    eventCatalog.forEach((ev) => {
+      const on = selectedEvents.has(ev.name);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = on ? "event-chip is-on" : "event-chip";
+      btn.textContent = eventChipLabel(ev.name);
+      btn.title = `${ev.name} — ${fmtN(ev.n)} projects, ${fmtN(ev.n_labelled)} labelled`;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.addEventListener("click", () => toggleEvent(ev.name));
+      eventTogglesRow.appendChild(btn);
+    });
+    renderEventNote();
   }
 
   function toggleEvent(name) {
