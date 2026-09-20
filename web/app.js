@@ -2481,6 +2481,45 @@
     }
   }
 
+  const LANDING_HOLD_MS = 2200;
+  const LANDING_SETTLE_MS = 1400;
+  let landingFinished = false;
+
+  function finishLanding() {
+    if (landingFinished) return;
+    landingFinished = true;
+    document.documentElement.classList.remove("is-landing", "is-landing-out");
+    resize();
+  }
+
+  function startLandingIntro() {
+    const html = document.documentElement;
+    if (!html.classList.contains("is-landing")) return;
+    if (reducedMotion) {
+      finishLanding();
+      return;
+    }
+    const mast = document.querySelector(".masthead");
+    window.setTimeout(() => {
+      html.classList.add("is-landing-out");
+      const settle = () => finishLanding();
+      if (mast) {
+        mast.addEventListener("transitionend", (ev) => {
+          if (ev.target === mast && ev.propertyName === "height") settle();
+        });
+      }
+      window.setTimeout(settle, LANDING_SETTLE_MS + 80);
+      const t0 = performance.now();
+      const tick = () => {
+        resize();
+        if (!landingFinished && performance.now() - t0 < LANDING_SETTLE_MS + 40) {
+          requestAnimationFrame(tick);
+        }
+      };
+      requestAnimationFrame(tick);
+    }, LANDING_HOLD_MS);
+  }
+
   async function boot() {
     try {
       const [mapRes, cfgRes] = await Promise.all([fetch("/api/map"), fetch("/api/config")]);
@@ -2557,14 +2596,9 @@
     const MAIN_MIN = 240;
     const BEAT_MS = 420;
     let layoutBusy = false;
-    let stackedRailW = 360;
+    let stackedRailW = RAIL_MIN;
     let wantTriptych = true;
     try {
-      const w = Number(localStorage.getItem("wtn-rail-w"));
-      if (Number.isFinite(w) && w >= RAIL_MIN) {
-        root.style.setProperty("--rail-w", `${Math.min(RAIL_MAX, w)}px`);
-        stackedRailW = Math.min(RAIL_MAX, w);
-      }
       const mid = Number(localStorage.getItem("wtn-mid-w"));
       if (Number.isFinite(mid) && mid >= MID_MIN) {
         root.style.setProperty("--mid-w", `${Math.min(MID_MAX, mid)}px`);
@@ -2638,7 +2672,7 @@
       if (layoutBusy) return;
 
       if (open) {
-        stackedRailW = parseInt(getComputedStyle(root).getPropertyValue("--rail-w"), 10) || stackedRailW || 360;
+        stackedRailW = parseInt(getComputedStyle(root).getPropertyValue("--rail-w"), 10) || stackedRailW || RAIL_MIN;
         fitTriptychWidths();
       }
 
@@ -2808,5 +2842,6 @@
     bind(splitY, "y");
   })();
 
+  startLandingIntro();
   boot();
 })();

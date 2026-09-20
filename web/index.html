@@ -4,12 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Win the North</title>
-  <link rel="icon" href="/web/favicon.ico?v=3" sizes="32x32" />
-  <link rel="icon" type="image/png" href="/web/favicon.png?v=3" sizes="64x64" />
-  <link rel="apple-touch-icon" href="/web/apple-touch-icon.png?v=2" />
-  <link rel="stylesheet" href="/web/style.css?v=83" />
+  <script>
+    (function () {
+      try {
+        if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          document.documentElement.classList.add("is-landing");
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="icon" href="/web/favicon.ico?v=4" sizes="32x32" />
+  <link rel="icon" type="image/png" href="/web/favicon.png?v=4" sizes="64x64" />
+  <link rel="apple-touch-icon" href="/web/apple-touch-icon.png?v=3" />
+  <link rel="stylesheet" href="/web/style.css?v=87" />
 </head>
 <body>
+  <div class="masthead">
   <div class="campsite" aria-hidden="true">
     <svg class="campsite-svg campsite-sky" viewBox="0 0 1440 240" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax slice">
       <defs>
@@ -72,6 +82,7 @@
     </nav>
   </header>
   <img class="plank" src="/web/bg-table.png" alt="" aria-hidden="true" />
+  </div>
 
   <main id="view-explore" class="view explore">
     <aside class="rail">
@@ -134,7 +145,7 @@
         <section class="neighbours" id="neighbours">
           <h2>Nearest neighbours</h2>
           <div class="neighbour-loader" id="neighbour-loader">
-            <img class="neighbour-mark" src="/web/crown-mark.png?v=1" alt="" />
+            <img class="neighbour-mark" src="/web/crown-mark.png?v=2" alt="" />
           </div>
           <p class="empty" id="neighbours-empty" hidden></p>
           <ol id="neighbour-list"></ol>
@@ -247,9 +258,9 @@
   </section>
 
   <div class="cursor-moose" id="cursor-moose" hidden aria-hidden="true">
-    <img src="/web/crown-mark.png?v=1" alt="" />
+    <img src="/web/crown-mark.png?v=2" alt="" />
   </div>
 
-  <script src="/web/app.js?v=70"></script>
+  <script src="/web/app.js?v=73"></script>
 </body>
 </html>
