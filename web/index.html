@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/web/style.css?v=45" />
+  <link rel="stylesheet" href="/web/style.css?v=48" />
 </head>
 <body>
   <div class="campsite" aria-hidden="true">
@@ -50,18 +50,54 @@
 
   <main id="view-explore" class="view explore">
     <aside class="rail">
-      <form id="ask-form" class="ask">
-        <label for="ask-input">Describe your project.</label>
-        <textarea id="ask-input" name="text" rows="2" maxlength="4000" placeholder="A cane that maps icy sidewalks…"></textarea>
-        <div class="ask-extras">
-          <label class="ask-sub" for="ask-github">GitHub, optional</label>
-          <input id="ask-github" name="github" type="text" maxlength="400" placeholder="github.com/you/hack" autocomplete="off" />
-          <label class="ask-sub" for="ask-devpost">Devpost, optional</label>
-          <input id="ask-devpost" name="devpost" type="text" maxlength="400" placeholder="hackthenorth2026.devpost.com" autocomplete="off" />
+      <div class="rail-north" id="rail-north">
+        <form id="ask-form" class="ask">
+          <label for="ask-input">Describe your project.</label>
+          <textarea id="ask-input" name="text" rows="2" maxlength="4000" placeholder="A cane that maps icy sidewalks…"></textarea>
+          <div class="ask-extras">
+            <label class="ask-sub" for="ask-github">GitHub, optional</label>
+            <input id="ask-github" name="github" type="text" maxlength="400" placeholder="github.com/you/hack" autocomplete="off" />
+            <label class="ask-sub" for="ask-devpost">Devpost, optional</label>
+            <input id="ask-devpost" name="devpost" type="text" maxlength="400" placeholder="hackthenorth2026.devpost.com" autocomplete="off" />
+          </div>
+          <button type="submit" id="ask-btn">Place it</button>
+          <p class="ask-status" id="ask-status" hidden></p>
+        </form>
+
+        <div class="ask-result" id="ask-result" hidden>
+          <div class="ask-result-bar">
+            <button type="button" id="ask-back" class="ask-back">Back</button>
+            <p class="ask-result-idea" id="ask-result-idea"></p>
+          </div>
+          <section class="prob" id="prob-panel" hidden>
+            <div class="prob-num" id="prob-num">—</div>
+            <div class="prob-label">Finalist Score</div>
+            <p class="prob-base" id="prob-base"></p>
+            <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
+            <div class="prob-caveat" id="prob-caveat"></div>
+            <ul class="prob-why" id="prob-why"></ul>
+            <div class="prob-meta" id="prob-meta"></div>
+          </section>
+          <section class="coach" id="coach-panel" hidden>
+            <h2>Coach</h2>
+            <label class="coach-time-toggle" for="coach-time-on">
+              <input type="checkbox" id="coach-time-on" checked />
+              Time-aware feasibility
+            </label>
+            <div class="coach-time" id="coach-time" hidden>
+              <p class="coach-hours" id="coach-hours"></p>
+              <div class="coach-budget-row">
+                <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
+                <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
+              </div>
+            </div>
+            <p class="empty" id="coach-status" hidden></p>
+            <ol id="coach-list"></ol>
+          </section>
         </div>
-        <button type="submit" id="ask-btn">Place it</button>
-        <p class="ask-status" id="ask-status" hidden></p>
-      </form>
+      </div>
+
+      <div class="rail-split rail-split-y" id="split-rail-y" role="separator" aria-orientation="horizontal" aria-label="Resize answer and neighbours"></div>
 
       <div class="rail-scroll" id="rail-scroll">
         <section class="twins" id="twins" hidden>
@@ -88,37 +124,6 @@
           <p class="empty" id="tracks-empty"></p>
           <ol id="track-list"></ol>
         </section>
-      </div>
-
-      <div class="rail-split rail-split-y" id="split-rail-y" role="separator" aria-orientation="horizontal" aria-label="Resize suggestions"></div>
-
-      <div class="rail-south" id="rail-south">
-      <section class="coach" id="coach-panel" hidden>
-        <h2>Coach</h2>
-        <label class="coach-time-toggle" for="coach-time-on">
-          <input type="checkbox" id="coach-time-on" checked />
-          Time-aware feasibility
-        </label>
-        <div class="coach-time" id="coach-time" hidden>
-          <p class="coach-hours" id="coach-hours"></p>
-          <div class="coach-budget-row">
-            <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
-            <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
-          </div>
-        </div>
-        <p class="empty" id="coach-status" hidden></p>
-        <ol id="coach-list"></ol>
-      </section>
-
-      <section class="prob" id="prob-panel" hidden>
-        <div class="prob-num" id="prob-num">—</div>
-        <div class="prob-label">Finalist Score</div>
-        <p class="prob-base" id="prob-base"></p>
-        <div class="prob-caveat" id="prob-caveat"></div>
-        <ul class="prob-why" id="prob-why"></ul>
-        <div class="prob-meta" id="prob-meta"></div>
-        <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
-      </section>
       </div>
     </aside>
     <div class="rail-split rail-split-x" id="split-rail-x" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
@@ -193,6 +198,6 @@
     </form>
   </section>
 
-  <script src="/web/app.js?v=35"></script>
+  <script src="/web/app.js?v=37"></script>
 </body>
 </html>

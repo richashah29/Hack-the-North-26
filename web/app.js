@@ -7,6 +7,9 @@
   const devpostInput = document.getElementById("ask-devpost");
   const askStatus = document.getElementById("ask-status");
   const askBtn = document.getElementById("ask-btn");
+  const askResult = document.getElementById("ask-result");
+  const askBack = document.getElementById("ask-back");
+  const askResultIdea = document.getElementById("ask-result-idea");
   const neighbourList = document.getElementById("neighbour-list");
   const neighboursEmpty = document.getElementById("neighbours-empty");
   const twinsEl = document.getElementById("twins");
@@ -719,9 +722,20 @@
   }
 
   function setCoachOpen(open) {
-    const rail = document.querySelector(".rail");
     if (coachPanel) coachPanel.hidden = !open;
-    if (rail) rail.classList.toggle("has-coach", !!open);
+  }
+
+  function ideaSummary(text) {
+    const t = String(text || "").replace(/\s+/g, " ").trim();
+    if (!t) return "";
+    return t.length > 90 ? `${t.slice(0, 87)}…` : t;
+  }
+
+  function setAnswered(on) {
+    const rail = document.querySelector(".rail");
+    if (rail) rail.classList.toggle("is-answered", !!on);
+    if (form) form.hidden = !!on;
+    if (askResult) askResult.hidden = !on;
   }
 
   function formatHoursLeft(hours) {
@@ -1185,6 +1199,10 @@
       renderNeighbours(data.neighbours || []);
       renderTracks(data.tracks);
       renderProb(data);
+      if (askResultIdea) askResultIdea.textContent = ideaSummary(text) || (github ? github : "Your idea");
+      setAnswered(true);
+      const railNorth = document.getElementById("rail-north");
+      if (railNorth) railNorth.scrollTop = 0;
       if (coachPanel) {
         setCoachOpen(false);
         lastCoach = null;
@@ -1195,10 +1213,8 @@
         }
         if (coachTime) coachTime.hidden = !timeAwareOn();
       }
-      const neighbours = document.getElementById("neighbours");
-      if (neighbours) {
-        neighbours.scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
-      }
+      const railScroll = document.getElementById("rail-scroll");
+      if (railScroll) railScroll.scrollTop = 0;
       if (askStatus) {
         const bits = [];
         const g = data.github;
@@ -1232,6 +1248,17 @@
       askBtn.disabled = false;
     }
   });
+
+  if (askBack) {
+    askBack.addEventListener("click", () => {
+      setAnswered(false);
+      if (askStatus) {
+        askStatus.hidden = true;
+        askStatus.classList.remove("is-loading");
+      }
+      if (input) input.focus();
+    });
+  }
 
   input.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey) {
@@ -1836,16 +1863,16 @@
     const rail = document.querySelector(".rail");
     const splitX = document.getElementById("split-rail-x");
     const splitY = document.getElementById("split-rail-y");
-    const railScroll = document.getElementById("rail-scroll");
+    const railNorth = document.getElementById("rail-north");
     const RAIL_MIN = 260;
     const RAIL_MAX = 720;
-    const MAIN_MIN = 88;
+    const MAIN_MIN = 240;
     try {
       const w = Number(localStorage.getItem("wtn-rail-w"));
       if (Number.isFinite(w) && w >= RAIL_MIN) {
         root.style.setProperty("--rail-w", `${Math.min(RAIL_MAX, w)}px`);
       }
-      const h = Number(localStorage.getItem("wtn-rail-main-h"));
+      const h = Number(localStorage.getItem("wtn-answer-h"));
       if (Number.isFinite(h) && h >= MAIN_MIN) {
         root.style.setProperty("--rail-main-h", `${h}px`);
       }
@@ -1866,14 +1893,12 @@
             const left = explore.getBoundingClientRect().left;
             const next = Math.max(RAIL_MIN, Math.min(RAIL_MAX, e.clientX - left));
             root.style.setProperty("--rail-w", `${Math.round(next)}px`);
-          } else if (rail && railScroll) {
-            const top = railScroll.getBoundingClientRect().top;
-            const south = document.getElementById("rail-south");
-            const southMin = 120;
+          } else if (rail && railNorth) {
+            const top = railNorth.getBoundingClientRect().top;
+            const southMin = 88;
             const maxH = rail.getBoundingClientRect().height - southMin - 48;
             const next = Math.max(MAIN_MIN, Math.min(maxH, e.clientY - top));
             root.style.setProperty("--rail-main-h", `${Math.round(next)}px`);
-            if (south) south.style.minHeight = `${southMin}px`;
           }
           resize();
         };
@@ -1886,7 +1911,7 @@
             const w = root.style.getPropertyValue("--rail-w").trim();
             const h = root.style.getPropertyValue("--rail-main-h").trim();
             if (w.endsWith("px")) localStorage.setItem("wtn-rail-w", String(parseInt(w, 10)));
-            if (h.endsWith("px")) localStorage.setItem("wtn-rail-main-h", String(parseInt(h, 10)));
+            if (h.endsWith("px")) localStorage.setItem("wtn-answer-h", String(parseInt(h, 10)));
           } catch (_) { /* ignore */ }
           resize();
         };
