@@ -1,4 +1,4 @@
-"""Repeatable stress test against a running Prior Art server.
+"""Repeatable stress test against a running Win the North server.
 
     python tests/stress_test.py
     python tests/stress_test.py --base http://127.0.0.1:8000

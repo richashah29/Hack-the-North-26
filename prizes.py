@@ -25,7 +25,7 @@ def prizes_file() -> Path:
     return Path(raw).expanduser() if raw else PRIZES_PATH
 
 
-HEAD = {"User-Agent": "PriorArt-HTN2026"}
+HEAD = {"User-Agent": "WinTheNorth-HTN2026"}
 YEAR_HOST = re.compile(r"hackthenorth(\d{4})?\.devpost\.com", re.I)
 STOP = set(ENGLISH_STOP_WORDS) | {
     "best",

@@ -1319,7 +1319,7 @@ class Engine:
         hits = self._cosine_hits(q, k=20, vec=vec) if q else []
         titles: list[str] = []
         lines = [
-            self._what_prior_art(),
+            self._what_win_the_north(),
             "",
             "RELEVANT PROJECTS (title | year | finalist | similarity | tagline):",
         ]
@@ -1343,9 +1343,9 @@ class Engine:
             "prizes": list(prize_names),
         }
 
-    def _what_prior_art(self) -> str:
+    def _what_win_the_north(self) -> str:
         return (
-            "Prior Art maps Hack the North submissions from 2014–2025 and places a new idea "
+            "Win the North maps Hack the North submissions from 2014–2025 and places a new idea "
             "next to real past projects. Finalist Score (0–100) is the percentile of the "
             "classifier's P(finalist) versus that corpus; 'finalist' means a top-12 project "
             "that year. We only know finalist status, not sponsor-track outcomes."

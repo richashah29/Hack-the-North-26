@@ -49,7 +49,7 @@ def parse_github_url(url: str) -> tuple[str, str] | None:
 def _headers() -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "PriorArt-HTN2026",
+        "User-Agent": "WinTheNorth-HTN2026",
         "X-GitHub-Api-Version": "2022-11-28",
     }
     token = (os.getenv("GITHUB_TOKEN") or "").strip()

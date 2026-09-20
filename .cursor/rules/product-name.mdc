@@ -1,0 +1,12 @@
+---
+description: Product name is Win the North, never Prior Art
+alwaysApply: true
+---
+
+# Product name
+
+This project is **Win the North**, not Prior Art.
+
+- Use "Win the North" in UI copy, comments, Gemini/system prompts, docs, and commit messages.
+- Do not reintroduce "Prior Art", "PriorArt", or `prior-art` as the product name.
+- User-Agent and similar identifiers should use `WinTheNorth`, not `PriorArt`.
