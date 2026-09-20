@@ -100,26 +100,6 @@ class CoachBody(BaseModel):
         return []
 
 
-class CoachMoveIn(BaseModel):
-    label: str = Field(default="", max_length=80)
-    rationale: str = Field(default="", max_length=240)
-    reframed_description: str = Field(default="", max_length=4000)
-    effort_hours: float = Field(default=4.0, ge=0, le=168)
-
-    @field_validator("label", "rationale", "reframed_description", mode="before")
-    @classmethod
-    def _nuls(cls, v):
-        if v is None:
-            return ""
-        if not isinstance(v, str):
-            return v
-        return _clean_text(v)
-
-
-class CoachStackBody(CoachBody):
-    moves: list[CoachMoveIn] = Field(default_factory=list, max_length=4)
-
-
 class ChatMessage(BaseModel):
     role: str = Field(default="user", max_length=32)
     content: str = Field(default="", max_length=4000)
@@ -138,6 +118,7 @@ class ChatBody(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list, max_length=20)
     idea: str = Field(default="", max_length=8000)
     question: str = Field(default="", max_length=8000)
+    events: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("idea", mode="before")
     @classmethod
@@ -163,6 +144,17 @@ class ChatBody(BaseModel):
         if v is None:
             return []
         return v
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _events(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [_clean_text(x) for x in v.split(",") if str(x).strip()][:8]
+        if isinstance(v, list):
+            return [_clean_text(str(x)) for x in v[:8]]
+        return []
 
 
 class SearchBody(BaseModel):
@@ -341,60 +333,6 @@ def api_coach(body: CoachBody) -> JSONResponse:
         )
 
 
-@app.post("/api/coach/stack")
-def api_coach_stack(body: CoachStackBody) -> JSONResponse:
-    from engine import engine, hours_until_build_end, json_safe
-
-    text = body.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="provide a description")
-    specs = [
-        {
-            "label": m.label,
-            "rationale": m.rationale,
-            "reframed_description": m.reframed_description,
-            "effort_hours": m.effort_hours,
-        }
-        for m in (body.moves or [])[:4]
-    ]
-    try:
-        return JSONResponse(
-            json_safe(
-                engine.coach_stack(
-                    text,
-                    specs,
-                    github=body.github,
-                    time_budget_hours=body.time_budget_hours,
-                    events=body.events,
-                )
-            )
-        )
-    except Exception as exc:
-        print(f"coach stack failed ({exc})")
-        remaining = hours_until_build_end()
-        budget = remaining if body.time_budget_hours is None else float(body.time_budget_hours)
-        return JSONResponse(
-            json_safe(
-                {
-                    "baseline": 0.0,
-                    "baseline_score": 0,
-                    "labels": [m.label for m in (body.moves or [])[:4]],
-                    "label": "",
-                    "new_prob": 0.0,
-                    "delta": 0.0,
-                    "new_score": 0,
-                    "score_delta": 0,
-                    "new_point": {"x": 0.0, "y": 0.0},
-                    "effort_hours": 0.0,
-                    "feasible": True,
-                    "hours_remaining": remaining,
-                    "time_budget_hours": round(max(0.0, budget), 2),
-                    "degraded": True,
-                }
-            )
-        )
-
-
 @app.post("/api/chat")
 def api_chat(body: ChatBody) -> JSONResponse:
     from engine import engine, json_safe
@@ -412,7 +350,7 @@ def api_chat(body: ChatBody) -> JSONResponse:
     if not any(str(m.get("content") or "").strip() for m in messages):
         raise HTTPException(status_code=400, detail="provide a message")
     try:
-        return JSONResponse(json_safe(engine.chat(messages, idea=body.idea)))
+        return JSONResponse(json_safe(engine.chat(messages, idea=body.idea, events=body.events)))
     except Exception as extra:
         print(f"chat failed ({extra})")
         return JSONResponse({"reply": "Chat is quiet. Place it still works.", "framings": []})

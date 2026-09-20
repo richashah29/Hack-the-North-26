@@ -33,7 +33,6 @@
   const coachBtn = document.getElementById("coach-btn");
   const coachStatus = document.getElementById("coach-status");
   const coachList = document.getElementById("coach-list");
-  const coachStack = document.getElementById("coach-stack");
   const timeToggle = document.getElementById("coach-time-on");
   const coachTime = document.getElementById("coach-time");
   const coachHours = document.getElementById("coach-hours");
@@ -53,11 +52,6 @@
   let neighbourLoaderTimer = 0;
   let coachInFlight = false;
   let pinnedIds = [];
-  let stackResult = null;
-  let stackGhostT = 1;
-  let stackRaf = 0;
-  let stackSeq = 0;
-  let stackAbort = null;
 
   const GOLD = "#C44B32";
   const FAINT = "#5F8A88";
@@ -475,29 +469,12 @@
     if (originPt) {
       for (const move of pinned) {
         if (!move || !move.new_point) continue;
-        const stacked = pinned.length >= 2;
-        strokeCoachPath(ctx, originPt, move.new_point, 1, r.you, stacked ? {
-          dash: [4, 5],
-          line: "rgba(42,24,16,0.22)",
-          width: 1.25,
-          tip: "rgba(61,155,150,0.4)",
-          tipWidth: 1.75,
-        } : {
+        strokeCoachPath(ctx, originPt, move.new_point, 1, r.you, {
           dash: [5, 5],
           line: "rgba(42,24,16,0.4)",
           width: 1.5,
           tip: PREVIEW,
           tipWidth: 2,
-        });
-      }
-      if (stackResult && stackResult.new_point && pinned.length >= 2) {
-        const t = Number.isFinite(stackGhostT) ? stackGhostT : 1;
-        strokeCoachPath(ctx, originPt, stackResult.new_point, t, r.you * 1.12, {
-          dash: [],
-          line: "rgba(61,155,150,0.8)",
-          width: 2.25,
-          tip: PREVIEW,
-          tipWidth: 2.5,
         });
       }
     }
@@ -915,33 +892,12 @@
 
   function resetPins() {
     pinnedIds = [];
-    stackResult = null;
-    stackGhostT = 1;
-    stackSeq += 1;
-    if (stackAbort) {
-      try { stackAbort.abort(); } catch (_) {}
-      stackAbort = null;
-    }
-    cancelAnimationFrame(stackRaf);
-    if (coachStack) {
-      coachStack.hidden = true;
-      coachStack.innerHTML = "";
-    }
   }
 
   function pinnedMoves() {
     const moves = (lastCoach && lastCoach.moves) || [];
     const byId = new Map(moves.map((m, i) => [m.id || `m${i}`, m]));
     return pinnedIds.map((id) => byId.get(id)).filter(Boolean);
-  }
-
-  function averagePoints(moves) {
-    const pts = (moves || []).map((m) => m && m.new_point).filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
-    if (!pts.length) return null;
-    return {
-      x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
-      y: pts.reduce((s, p) => s + p.y, 0) / pts.length,
-    };
   }
 
   function paintCoachPins() {
@@ -953,141 +909,15 @@
     }
   }
 
-  function playStackGhost(point) {
-    if (!query || !query.point || !point) {
-      stackGhostT = 1;
-      draw();
-      return;
-    }
-    if (reducedMotion) {
-      stackGhostT = 1;
-      draw();
-      return;
-    }
-    stackGhostT = 0;
-    cancelAnimationFrame(stackRaf);
-    const step = () => {
-      stackGhostT = Math.min(1, stackGhostT + 0.07);
-      draw();
-      if (stackGhostT < 1) stackRaf = requestAnimationFrame(step);
-    };
-    stackRaf = requestAnimationFrame(step);
-  }
-
-  function renderStackBar(data) {
-    if (!coachStack) return;
-    const picked = pinnedMoves();
-    if (!picked.length) {
-      coachStack.hidden = true;
-      coachStack.innerHTML = "";
-      return;
-    }
-    coachStack.hidden = false;
-    const labels = (data && data.labels) || picked.map((m) => m.label).filter(Boolean);
-    const title = labels.join(" + ") || "Stacked moves";
-    if (data && data.loading) {
-      coachStack.innerHTML = `<p class="coach-stack-label">${escapeHtml(title)}</p>
-        <p class="coach-stack-note">Recalculating the combined score…</p>`;
-      return;
-    }
-    const scoreSrc = picked.length >= 2 ? data : picked[0];
-    const signed = scoreSrc && (scoreSrc.new_score != null || scoreSrc.score_delta != null)
-      ? formatScoreMove(scoreSrc, lastCoach && lastCoach.baseline_score)
-      : "";
-    const effort = Number(scoreSrc && scoreSrc.effort_hours);
-    const aware = timeAwareOn();
-    const budget = budgetValue(lastCoach);
-    const late = aware && Number.isFinite(effort) && effort > budget;
-    const note = picked.length >= 2
-      ? "Combined and rescored, not the sum of the cards."
-      : "Click another move to stack it.";
-    const bits = [];
-    if (signed) bits.push(escapeHtml(signed));
-    if (aware && Number.isFinite(effort)) bits.push(escapeHtml(formatEffort(effort)));
-    if (late) bits.push("too late");
-    coachStack.innerHTML = `<p class="coach-stack-label">${escapeHtml(picked.length >= 2 ? `Stacked: ${title}` : `Kept: ${title}`)}</p>
-      ${bits.length ? `<p class="coach-stack-score">${bits.join(" · ")}</p>` : ""}
-      <p class="coach-stack-note">${escapeHtml(note)}</p>`;
-  }
-
-  async function syncStack() {
-    const seq = ++stackSeq;
-    if (stackAbort) {
-      try { stackAbort.abort(); } catch (_) {}
-    }
-    paintCoachPins();
-    const picked = pinnedMoves();
-    if (!picked.length) {
-      stackResult = null;
-      stackGhostT = 1;
-      renderStackBar(null);
-      draw();
-      return;
-    }
-    if (picked.length === 1) {
-      stackResult = null;
-      stackGhostT = 1;
-      renderStackBar(picked[0]);
-      playGhost(picked[0]);
-      draw();
-      return;
-    }
-    renderStackBar({ loading: true, labels: picked.map((m) => m.label) });
-    draw();
-    const ac = new AbortController();
-    stackAbort = ac;
-    setCursorBusy(true);
-    try {
-      const body = {
-        text: lastIdeaText || (input && input.value.trim()) || "",
-        moves: picked.map((m) => ({
-          label: m.label || "",
-          rationale: m.rationale || "",
-          reframed_description: m.reframed_description || "",
-          effort_hours: Number(m.effort_hours) || 4,
-        })),
-      };
-      const github = lastGithub || (githubInput && githubInput.value.trim()) || "";
-      if (github) body.github = github;
-      if (timeAwareOn() && budgetInput && budgetInput.value !== "") {
-        const n = Number(budgetInput.value);
-        if (Number.isFinite(n) && n >= 0) body.time_budget_hours = n;
-      }
-      const res = await fetch("/api/coach/stack", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withEvents(body)),
-        signal: ac.signal,
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      if (seq !== stackSeq) return;
-      if (data && data.degraded) throw new Error("degraded");
-      stackResult = data;
-      renderStackBar(data);
-      playStackGhost(data && data.new_point);
-    } catch (err) {
-      if (err && err.name === "AbortError") return;
-      if (seq !== stackSeq) return;
-      const fallback = averagePoints(picked);
-      stackResult = fallback
-        ? { new_point: fallback, labels: picked.map((m) => m.label), degraded: true }
-        : null;
-      renderStackBar(stackResult || { degraded: true, labels: picked.map((m) => m.label) });
-      if (fallback) playStackGhost(fallback);
-      else draw();
-      console.error(err);
-    } finally {
-      setCursorBusy(false);
-    }
-  }
-
   function togglePin(move, index) {
     const id = (move && move.id) || `m${index}`;
-    const at = pinnedIds.indexOf(id);
-    if (at >= 0) pinnedIds.splice(at, 1);
-    else if (pinnedIds.length < 4) pinnedIds.push(id);
-    syncStack();
+    if (pinnedIds.length === 1 && pinnedIds[0] === id) pinnedIds = [];
+    else pinnedIds = [id];
+    paintCoachPins();
+    const picked = pinnedMoves()[0];
+    if (picked) playGhost(picked);
+    else clearGhost();
+    draw();
   }
 
   function timeAwareOn() {
@@ -1233,11 +1063,6 @@
       });
       coachList.appendChild(li);
     }
-    if (pinnedIds.length) renderStackBar(stackResult);
-    else if (coachStack) {
-      coachStack.hidden = true;
-      coachStack.innerHTML = "";
-    }
     draw();
   }
 
@@ -1332,13 +1157,17 @@
       return;
     }
     if (tracksMethod) {
-      tracksMethod.hidden = false;
-      const nWin = payload.n_winners;
-      const nEv = payload.n_events;
-      tracksMethod.textContent = Number.isFinite(Number(nWin))
-        ? `Likeness to ${nWin} labeled prize winners across ${nEv} events. Recurring MLH families share a sample. This is not the 12-finalist score.`
-        : "Likeness to labeled prize winners across events. This is not the 12-finalist score.";
-    }
+        tracksMethod.hidden = false;
+        if (payload.method) {
+          tracksMethod.textContent = payload.method;
+        } else {
+          const nWin = payload.n_winners;
+          const nEv = payload.n_events;
+          tracksMethod.textContent = Number.isFinite(Number(nWin))
+            ? `Likeness to ${nWin} labeled prize winners in the selected events. This is not the 12-finalist score.`
+            : "Likeness to labeled prize winners. This is not the 12-finalist score.";
+        }
+      }
     const rows = payload.ranked || [];
     if (!rows.length) {
       tracksEmpty.hidden = false;
@@ -2097,10 +1926,10 @@
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: JSON.stringify(withEvents({
             messages: chatThread.slice(-8),
             idea: lastIdeaText || (input && input.value.trim()) || "",
-          }),
+          })),
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
@@ -2213,6 +2042,18 @@
     return chart.unit || "";
   }
 
+  function barIsFocus(chart, bar) {
+    const label = String((bar && bar.label) || "").trim().toLowerCase();
+    if (chart.id === "video") return label.includes("has video") || label === "video";
+    if (chart.id === "team") return label === "4+" || /^4\b/.test(label);
+    if (chart.id === "framing") {
+      return label.includes("playful") || label.includes("personality");
+    }
+    const bars = chart.bars || [];
+    const max = Math.max(0, ...bars.map((b) => Number(b.value) || 0));
+    return max > 0 && (Number(bar.value) || 0) === max;
+  }
+
   function drawHBars(chart, meta) {
     const bars = chart.bars || [];
     const baseline = meta.baseline || 0;
@@ -2256,7 +2097,7 @@
       }, b.label || "", "label"));
       svg.appendChild(svgEl("rect", {
         x: plotX, y, width: Math.max(w, 1), height: barH,
-        rx: 3, class: i === 0 ? "chart-bar" : "chart-bar-mute",
+        rx: 3, class: barIsFocus(chart, b) ? "chart-bar" : "chart-bar-mute",
       }));
       svg.appendChild(svgText({
         x: W - 8, y: y + 6, "text-anchor": "end",

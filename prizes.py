@@ -257,6 +257,8 @@ GENERIC_NEEDLE = STOP | {
     "stack",
     "time",
     "series",
+    "badge",
+    "badges",
 }
 # Closed challenges: do not recommend just because the idea is "hardware" or "AI".
 # Needles must appear in the team's idea/repo, not only in the prize title.
@@ -295,6 +297,7 @@ PLATFORM_REQUIRES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
         ("tiger data", "tigerdata", "timescale"),
         ("tiger data", "tigerdata", "timescaledb", "timescale", "hypertable"),
     ),
+    (("solana",), ("solana",)),
 )
 
 BRAND_ALIASES = {
@@ -525,17 +528,15 @@ def idea_fits_track(text: str, track: dict[str, str] | None) -> bool:
     """True if this idea could enter that challenge as written.
 
     Closed kit/sim challenges need their own needles. 'Best Use of X' tracks
-    need distinctive brand evidence, not a generic word like data or api.
+    need distinctive brand evidence, not a generic word like data, api, or badge.
     """
     needles = list(track_requires(track))
     name = (track.get("name") or "") if track else ""
     desc = (track.get("description") or track.get("blurb") or "") if track else ""
-    brand, extra = _sponsor_needles(name, desc)
+    evidence = _evidence_needles(name, desc)
     best_use = "best use of" in name.lower()
     if best_use or needles:
-        needles = list(dict.fromkeys([*needles, *extra]))
-        if brand and brand.lower() not in GENERIC_NEEDLE:
-            needles = list(dict.fromkeys([*needles, brand.lower()]))
+        needles = list(dict.fromkeys([*needles, *evidence]))
         if not needles:
             return False
         blob = (text or "").lower()
@@ -927,6 +928,18 @@ def _layer_for(needles: list[str], layers: dict[str, str]) -> str:
     return "absent"
 
 
+def _best_use_product(name: str, brand: str = "") -> str:
+    """Product in 'Best Use of X', dropping trailing 'and Badge Hack' style clauses."""
+    m = re.search(r"best use of ([a-z0-9 .+-]+)", name or "", re.I)
+    if not m:
+        return ""
+    chunk = m.group(1).strip()
+    first = re.split(r"\s+and\s+", chunk, maxsplit=1, flags=re.I)[0].strip()
+    if brand or first:
+        return first
+    return chunk
+
+
 def _sponsor_needles(name: str, desc: str) -> tuple[str, list[str]]:
     needles: list[str] = []
     brand = ""
@@ -936,17 +949,17 @@ def _sponsor_needles(name: str, desc: str) -> tuple[str, list[str]]:
             brand = left
             needles.append(left.lower())
             needles.extend(sorted(_tokens(left)))
-    m = re.search(r"best use of ([a-z0-9 .+-]+)", name, re.I)
-    if m:
-        chunk = m.group(1).strip()
+    chunk = _best_use_product(name, brand)
+    if chunk:
         if not brand:
             brand = chunk
         needles.append(chunk.lower())
         needles.extend(sorted(_tokens(chunk)))
     blob = f"{name} {desc}".lower()
     for canon, aliases in BRAND_ALIASES.items():
-        if any(a in blob for a in aliases) or canon in blob:
+        if _contains_brand(blob, canon) or any(_contains_brand(blob, a) for a in aliases):
             needles.extend(aliases)
+            needles.append(canon)
             if not brand:
                 brand = canon
     out: list[str] = []
@@ -958,6 +971,38 @@ def _sponsor_needles(name: str, desc: str) -> tuple[str, list[str]]:
         seen.add(n)
         out.append(n)
     return brand, out[:10]
+
+
+def _evidence_needles(name: str, desc: str = "") -> list[str]:
+    """Needles that mean the sponsor product is actually in the idea/repo.
+
+    Title leftovers like 'badge' in 'Best Use of Solana and Badge Hack' must
+    not count as code evidence.
+    """
+    brand, needles = _sponsor_needles(name, desc)
+    focused: list[str] = []
+    seen: set[str] = set()
+
+    def add(raw: str) -> None:
+        n = (raw or "").strip().lower()
+        if len(n) < 3 or n in GENERIC_NEEDLE or n in seen:
+            return
+        seen.add(n)
+        focused.append(n)
+
+    blob = f"{name} {desc}".lower()
+    if brand:
+        add(brand)
+    for canon, aliases in BRAND_ALIASES.items():
+        if (
+            (brand and canon == brand.lower())
+            or _contains_brand(blob, canon)
+            or any(_contains_brand(blob, a) for a in aliases)
+        ):
+            add(canon)
+            for a in aliases:
+                add(a)
+    return focused or needles
 
 
 def _hard_requirements(desc: str) -> list[str]:
@@ -1092,6 +1137,22 @@ class PrizeMemory:
         self.source = ""
         self.n_events = 0
 
+    def _allowed_events(self, events: list[str] | tuple[str, ...] | None) -> set[str] | None:
+        wanted = {str(e).strip() for e in (events or []) if str(e).strip()}
+        return wanted or None
+
+    def winner_indices(self, events: list[str] | tuple[str, ...] | None = None) -> list[int]:
+        allowed = self._allowed_events(events)
+        if not allowed:
+            return list(range(len(self.winners)))
+        return [i for i, r in enumerate(self.winners) if r.get("event") in allowed]
+
+    def scoped(self, events: list[str] | tuple[str, ...] | None = None) -> dict[str, int]:
+        idxs = self.winner_indices(events)
+        names = {self.winners[i].get("event") for i in idxs if self.winners[i].get("event")}
+        eids = {self.winners[i].get("event_id") for i in idxs if self.winners[i].get("event_id")}
+        return {"n_winners": len(idxs), "n_events": len(names) or len(eids)}
+
     @classmethod
     def load(cls) -> "PrizeMemory":
         mem = cls()
@@ -1172,28 +1233,44 @@ class PrizeMemory:
         )
         return mem
 
-    def _indices_for_track(self, track: dict[str, str]) -> tuple[str, list[int], str]:
+    def _indices_for_track(
+        self,
+        track: dict[str, str],
+        events: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[str, list[int], str]:
         blob = f"{track.get('name') or ''} {track.get('sponsor') or ''} {track.get('blurb') or ''} {track.get('description') or ''}"
         fam = family_key(blob)
         if fam and fam in self.family_index:
-            return fam, list(self.family_index[fam]), "family"
-        name = track.get("name") or ""
-        hits: list[int] = []
-        for i, r in enumerate(self.winners):
-            best = 0.0
-            for prize in r["prizes"]:
-                ov = _prize_overlap(name, prize)
-                if ov > best:
-                    best = ov
-            if best >= 0.5:
-                hits.append(i)
-        return fam, hits, "name"
+            idxs = list(self.family_index[fam])
+            how = "family"
+        else:
+            name = track.get("name") or ""
+            idxs = []
+            for i, r in enumerate(self.winners):
+                best = 0.0
+                for prize in r["prizes"]:
+                    ov = _prize_overlap(name, prize)
+                    if ov > best:
+                        best = ov
+                if best >= 0.5:
+                    idxs.append(i)
+            how = "name"
+        allowed = self._allowed_events(events)
+        if allowed:
+            idxs = [i for i in idxs if self.winners[i].get("event") in allowed]
+        return fam, idxs, how
 
-    def likeness(self, track: dict[str, str], query: str) -> dict[str, Any]:
-        fam, idxs, how = self._indices_for_track(track)
+    def likeness(
+        self,
+        track: dict[str, str],
+        query: str,
+        events: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        fam, idxs, how = self._indices_for_track(track, events=events)
         n = len(idxs)
+        event_names = {self.winners[i].get("event") for i in idxs if self.winners[i].get("event")}
         event_ids = {self.winners[i]["event_id"] for i in idxs if self.winners[i].get("event_id")}
-        n_events = len(event_ids)
+        n_events = len(event_names) or len(event_ids)
         kind = "new"
         if n >= 1 and n_events >= 2:
             kind = "recurring"
@@ -1259,13 +1336,13 @@ def advise_tracks(
     prompt: str = "",
     signals: dict[str, Any] | None = None,
     prize_memory: PrizeMemory | None = None,
+    events: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank this year's sponsor tracks against labeled prize winners.
 
     Action is still evidence (code / README / prompt). The number on the card
-    is cosine likeness to `won_prize` writeups in that prize family — pooled
-    across events for recurring MLH tracks, n=1–few for niche ones. It is not
-    the 12-finalist score and not P(win | submit).
+    is cosine likeness to `won_prize` writeups in that prize family, scoped to
+    the selected events. It is not the 12-finalist score and not P(win | submit).
     """
     if not tracks:
         return []
@@ -1292,7 +1369,8 @@ def advise_tracks(
         brand, needles = _sponsor_needles(t["name"], t.get("description") or "")
         if not needles:
             needles = [n for n in sorted(_tokens(t["name"])) if n not in GENERIC_NEEDLE][:6]
-        layer = _layer_for(needles, layers)
+        evidence = _evidence_needles(t["name"], t.get("description") or "") or needles
+        layer = _layer_for(evidence, layers)
         combined_fit = (
             f"{prompt_text} {document or ''} {layers.get('code') or ''} {layers.get('readme') or ''}"
         )
@@ -1306,7 +1384,7 @@ def advise_tracks(
         action = _action(layer, potential)
         family = next(iter(title_cats), None)
         like = (
-            prize_memory.likeness(t, document or prompt_text)
+            prize_memory.likeness(t, document or prompt_text, events=events)
             if prize_memory is not None
             else {
                 "family": family,
@@ -1346,6 +1424,12 @@ def advise_tracks(
             continue
         hard = _hard_requirements(t.get("description") or "")
         show_past = past if action != "skip" or n_lab else []
+        if events:
+            allowed_ev = {str(e).strip() for e in events if str(e).strip()}
+            if allowed_ev:
+                show_past = [
+                    p for p in show_past if not p.get("event") or p.get("event") in allowed_ev
+                ]
         moves = _moves(action, brand, layer, t, show_past, hard)
         why = [
             f"{action}: {layer} evidence"
@@ -1428,6 +1512,7 @@ def rank_tracks(
     prompt: str = "",
     prize_memory: PrizeMemory | None = None,
     signals: dict[str, Any] | None = None,
+    events: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     return advise_tracks(
         document,
@@ -1439,4 +1524,5 @@ def rank_tracks(
         prompt=prompt,
         signals=signals,
         prize_memory=prize_memory,
+        events=events,
     )

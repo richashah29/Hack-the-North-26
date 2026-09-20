@@ -1759,26 +1759,32 @@ class Engine:
             ranked = advise_tracks(
                 document,
                 tracks,
-                self.projects,
+                [self.projects[int(i)] for i in idx] or self.projects,
                 neighbour_slugs=[slug for slug, _ in pairs],
                 repo=repo if repo and repo.get("ok") else None,
                 prompt=prompt,
                 signals=signals,
                 prize_memory=self.prize_memory,
+                events=self.normalize_events(events),
             )
             pool = self.prize_memory
+            scoped = pool.scoped(self.normalize_events(events)) if pool is not None else {
+                "n_winners": 0,
+                "n_events": 0,
+            }
+            scope_names = list(self.normalize_events(events))
+            scope_label = ", ".join(scope_names) if scope_names else "the selected events"
             tracks_out = {
                 "ok": True,
                 "url": fetched_url,
                 "n": len(tracks),
                 "ranked": ranked,
-                "n_winners": 0 if pool is None else len(pool.winners),
-                "n_events": 0 if pool is None else pool.n_events,
+                "n_winners": scoped["n_winners"],
+                "n_events": scoped["n_events"],
+                "events": scope_names,
                 "pool_source": "" if pool is None else Path(pool.source).name,
                 "method": (
-                    "Likeness to labeled prize winners, pooled across events "
-                    "for recurring MLH families (Gemini, ElevenLabs, MongoDB). "
-                    "Niche tracks still get a cosine to the few labeled writeups. "
+                    f"Likeness to labeled prize winners in {scope_label}. "
                     "This is not the 12-finalist score."
                 ),
                 "error": None,
@@ -1960,7 +1966,8 @@ class Engine:
             '{"moves":[{"label":str,"rationale":str,"reframed_description":str,'
             '"effort_hours":number,'
             '"features":{"hardware":bool,"has_video":bool,"has_repo":bool,"extra_tech_tags":int}}]}. '
-            "Give three or four distinct moves. rationale is one sentence. "
+            "Give three or four distinct moves. Never two of the same action "
+            "(not two demo-video moves, not two hardware builds). rationale is one sentence. "
             "reframed_description is the whole idea rewritten as if that move already shipped. "
             "You only phrase. effort_hours is hours for a four-person team. "
             "Do not decide feasibility. Numbers are forbidden in label, rationale, and "
@@ -2064,23 +2071,25 @@ class Engine:
                 if feats.get("has_repo") and float(signals.get("has_repo") or 0) >= 1.0:
                     continue
                 kept.append(spec)
-        specs = filter_coach_moves(kept, tracks=tracks, projects=self.projects, idea=prompt)[:6]
-        have = {str(s.get("label") or "").lower() for s in specs}
-        if float(signals.get("has_repo") or 0) < 1.0 and not any("github" in h for h in have):
+        specs = filter_coach_moves(kept, tracks=tracks, projects=self.projects, idea=prompt)
+        specs = _dedupe_coach_specs(specs)
+        have_kinds = {_coach_kind(s) for s in specs}
+        if float(signals.get("has_repo") or 0) < 1.0 and "repo" not in have_kinds:
             for extra_spec in _fallback_coach_specs(document, signals):
-                if "github" in extra_spec["label"].lower():
+                if _coach_kind(extra_spec) == "repo":
                     specs.insert(0, extra_spec)
-                    have.add(extra_spec["label"].lower())
+                    have_kinds.add("repo")
                     break
         if len(specs) < 2:
             for extra_spec in _fallback_coach_specs(document, signals):
-                if extra_spec["label"].lower() in have:
+                kind = _coach_kind(extra_spec)
+                if kind in have_kinds:
                     continue
                 specs.append(extra_spec)
-                have.add(extra_spec["label"].lower())
+                have_kinds.add(kind)
                 if len(specs) >= 3:
                     break
-        specs = specs[:6]
+        specs = _dedupe_coach_specs(specs)[:6]
         if not specs:
             return json_safe(out)
         texts = [s["reframed_description"] for s in specs]
@@ -2105,6 +2114,7 @@ class Engine:
                 )
             )
         moves = [m for m in moves if abs(int(m.get("score_delta") or 0)) >= 1]
+        moves = _dedupe_coach_moves(moves)
         moves.sort(key=lambda m: -m["score_delta"])
         moves = moves[:4]
         for i, move in enumerate(moves):
@@ -2186,83 +2196,9 @@ class Engine:
             "feasible": bool(effort <= budget),
         }
 
-    def coach_stack(
-        self,
-        idea: str,
-        specs: list[dict[str, Any]],
-        github: str = "",
-        time_budget_hours: float | None = None,
-        events: list[str] | tuple[str, ...] | None = None,
+    def chat(
+        self, messages: list[dict[str, Any]], idea: str = "", events: list[str] | None = None
     ) -> dict[str, Any]:
-        """Rescore a pin-stack of coach moves as one combined idea. No Gemini."""
-        from github_repo import compose_embed_text
-
-        remaining, budget = _coach_clock(time_budget_hours)
-        prompt = (idea or "").strip()
-        document = compose_embed_text(prompt, None) or prompt
-        signals = parse_signals(document, None)
-        if (github or "").strip():
-            signals["has_repo"] = 1.0
-        embed_vec = None
-        try:
-            embed_vec, _point = self._embed_document(document)
-        except Exception as exc:
-            print(f"coach stack embed skipped ({exc})")
-            embed_vec = None
-        baseline_clf, _ = self._probability(embed_vec, signals, events=events)
-        baseline = self._score_like_ask(embed_vec, signals, events=events)
-        baseline_score = self.percentile_score(baseline, events)
-        clock = {
-            "baseline": round(finite_unit(baseline), 4),
-            "baseline_score": baseline_score,
-            "hours_remaining": float(remaining),
-            "time_budget_hours": float(budget),
-        }
-        cleaned: list[dict[str, Any]] = []
-        for spec in specs or []:
-            if not isinstance(spec, dict):
-                continue
-            cleaned.append(spec)
-            if len(cleaned) >= 4:
-                break
-        if not cleaned:
-            return json_safe(
-                {
-                    **clock,
-                    "labels": [],
-                    "label": "",
-                    "new_prob": clock["baseline"],
-                    "delta": 0.0,
-                    "new_score": baseline_score,
-                    "score_delta": 0,
-                    "new_point": {"x": 0.0, "y": 0.0},
-                    "effort_hours": 0.0,
-                    "feasible": True,
-                    "features": {},
-                }
-            )
-        combined = _combine_coach_specs(cleaned, prompt)
-        packed = self._pack_coach_move(
-            combined,
-            signals,
-            embed_vec,
-            None,
-            baseline,
-            baseline_clf,
-            baseline_score,
-            budget,
-            events=events,
-        )
-        try:
-            _vec, point = self._embed_document(combined["reframed_description"])
-            packed["new_point"] = {"x": float(point["x"]), "y": float(point["y"])}
-        except Exception as exc:
-            print(f"coach stack point skipped ({exc})")
-        packed["labels"] = [str(s.get("label") or "") for s in cleaned]
-        packed.update(clock)
-        return json_safe(packed)
-
-    def chat(self, messages: list[dict[str, Any]], idea: str = "") -> dict[str, Any]:
         """Phrasing-only chat. Numbers come from /api/ask after Preview."""
         from prizes import coach_move_violation, load_prize_tracks
 
@@ -2323,10 +2259,49 @@ class Engine:
             )
             if len(framings) >= 3:
                 break
+        framings, weak = self._keep_stronger_framings(framings, idea, events)
+        if weak and not framings:
+            reply = "Try targeting a different theme, or be more specific about what a judge would see."
         if not reply:
             reply = "Here is a tighter framing. Preview it on the map if you want the classifier number."
         reply = _complete_chat_reply(reply, framings)
         return json_safe({"reply": reply, "framings": framings})
+
+    def _keep_stronger_framings(
+        self,
+        framings: list[dict[str, Any]],
+        idea: str,
+        events: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Drop chat reframes that would score below the placed idea."""
+        if not framings or not (idea or "").strip():
+            return framings, False
+        try:
+            sig = parse_signals(idea, None)
+            vec, _ = self._embed_document(idea)
+            baseline = self.percentile_score(self._score_like_ask(vec, sig, events=events), events)
+        except Exception as extra:
+            print(f"chat baseline skipped ({extra})")
+            return framings, False
+        kept: list[dict[str, Any]] = []
+        weak = False
+        for row in framings:
+            text = str(row.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                vec, _ = self._embed_document(text)
+                sig = parse_signals(text, None)
+                score = self.percentile_score(self._score_like_ask(vec, sig, events=events), events)
+            except Exception as extra:
+                print(f"chat framing score skipped ({extra})")
+                kept.append(row)
+                continue
+            if int(score) >= int(baseline):
+                kept.append(row)
+            else:
+                weak = True
+        return kept, weak
 
     def answer_question(self, question: str) -> dict[str, Any]:
         """Grounded Q&A. If Gemini fails, a short couldn't-answer — never 500."""
@@ -2380,6 +2355,9 @@ class Engine:
             "reply is 2 to 5 complete sentences that answer the question. Never open with "
             "'here are N ways' unless every item is finished inside reply. Give zero to two "
             "framings; each framing must include a full rewritten idea in text. "
+            "Only propose a framing if it is a stronger, more specific version of the current idea. "
+            "If you cannot strengthen it, return framings [] and tell them to target a different "
+            "theme or be more specific. "
             "You only phrase. Numbers are forbidden in reply, label, text, and rationale. "
             "You may say finalist. If you mention a past project, copy title and year from CONTEXT."
         )
@@ -2429,21 +2407,107 @@ def _gemini_unavailable(exc: Exception) -> bool:
     return any(n in msg for n in needles)
 
 
+_COACH_STOP = frozenset(
+    "a an the of to for and or in on with your this that it app showing more than".split()
+)
+
+
+def _coach_blob(spec: dict[str, Any]) -> str:
+    return " ".join(
+        str(spec.get(k) or "")
+        for k in ("label", "rationale", "reframed_description")
+    ).lower()
+
+
+def _coach_kind(spec: dict[str, Any]) -> str:
+    spec = spec if isinstance(spec, dict) else {}
+    feats = spec.get("features") if isinstance(spec.get("features"), dict) else {}
+    blob = _coach_blob(spec)
+    if feats.get("hardware") or any(
+        w in blob for w in ("physical build", "physical prototype", "hardware")
+    ):
+        return "hardware"
+    if feats.get("has_video") or any(
+        w in blob for w in ("video", "film", "youtube", "live demo", "screen recording")
+    ):
+        return "video"
+    if feats.get("has_repo") or "github" in blob or "public repo" in blob:
+        return "repo"
+    if "stack" in blob:
+        return "stack"
+    if "judging" in blob or "story" in blob:
+        return "story"
+    tokens = [
+        t
+        for t in re.findall(r"[a-z]{3,}", str(spec.get("label") or "").lower())
+        if t not in _COACH_STOP
+    ]
+    return "other:" + " ".join(tokens[:6])
+
+
+def _stem_token(word: str) -> str:
+    for suf in ("ing", "ed", "es", "s"):
+        if len(word) > 5 and word.endswith(suf):
+            return word[: -len(suf)]
+    return word
+
+
+def _labels_overlap(a: str, b: str) -> bool:
+    wa = {_stem_token(t) for t in re.findall(r"[a-z]{3,}", (a or "").lower()) if t not in _COACH_STOP}
+    wb = {_stem_token(t) for t in re.findall(r"[a-z]{3,}", (b or "").lower()) if t not in _COACH_STOP}
+    if not wa or not wb:
+        return False
+    inter = len(wa & wb)
+    return inter >= 2 and inter / min(len(wa), len(wb)) >= 0.5
+
+
+def _dedupe_coach_specs(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    kept: list[dict[str, Any]] = []
+    kinds: set[str] = set()
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        spec = _enrich_coach_features(spec)
+        kind = _coach_kind(spec)
+        if kind in kinds:
+            continue
+        lab = str(spec.get("label") or "")
+        if any(_labels_overlap(lab, str(row.get("label") or "")) for row in kept):
+            continue
+        kinds.add(kind)
+        kept.append(spec)
+    return kept
+
+
+def _dedupe_coach_moves(moves: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered = sorted(moves, key=lambda m: -int(m.get("score_delta") or 0))
+    kept: list[dict[str, Any]] = []
+    kinds: set[str] = set()
+    for move in ordered:
+        kind = _coach_kind(move)
+        if kind in kinds:
+            continue
+        lab = str(move.get("label") or "")
+        if any(_labels_overlap(lab, str(row.get("label") or "")) for row in kept):
+            continue
+        kinds.add(kind)
+        kept.append(move)
+    return kept
+
+
 def _enrich_coach_features(spec: dict[str, Any], signals: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Fill hardware/video/repo flags from the move's label, not Gemini's booleans."""
+    """Fill hardware/video/repo flags from the move text, keeping Gemini's booleans."""
     signals = signals or {}
     feats = spec.get("features") if isinstance(spec.get("features"), dict) else {}
-    blob = " ".join(
-        str(spec.get(k) or "") for k in ("label", "rationale")
-    ).lower()
-    hardware = any(
+    blob = _coach_blob(spec)
+    hardware = bool(feats.get("hardware")) or any(
         w in blob for w in ("physical", "hardware", "sensor", "wearable", "prototype you can")
     )
-    has_video = any(
+    has_video = bool(feats.get("has_video")) or any(
         w in blob
         for w in ("video", "film", "youtube", "live demo", "demonstration", "screen recording")
     )
-    has_repo = any(
+    has_repo = bool(feats.get("has_repo")) or any(
         w in blob for w in ("github", "public repo", "publish the repo", "put the code on")
     )
     try:
@@ -2454,7 +2518,8 @@ def _enrich_coach_features(spec: dict[str, Any], signals: dict[str, Any] | None 
         w in blob
         for w in ("name a real stack", "named stack", "name a concrete stack", "name real stack")
     )
-    extra = 2 if stackish else 0
+    if stackish:
+        extra = max(extra, 2)
     if hardware and signals.get("hardware"):
         extra = 0
     spec["features"] = {
@@ -2464,54 +2529,6 @@ def _enrich_coach_features(spec: dict[str, Any], signals: dict[str, Any] | None 
         "extra_tech_tags": max(0, min(8, extra)),
     }
     return spec
-
-
-def _combine_coach_specs(specs: list[dict[str, Any]], idea: str) -> dict[str, Any]:
-    """Merge pinned moves into one spec so features OR and the map point is re-embedded."""
-    core = (idea or "").strip()
-    labels: list[str] = []
-    rationales: list[str] = []
-    additions: list[str] = []
-    effort = 0.0
-    for spec in specs:
-        if not isinstance(spec, dict):
-            continue
-        lab = str(spec.get("label") or "").strip()
-        if lab:
-            labels.append(lab)
-        rat = str(spec.get("rationale") or "").strip()
-        if rat:
-            rationales.append(rat)
-        try:
-            hours = float(spec.get("effort_hours") or 0.0)
-        except (TypeError, ValueError):
-            hours = 0.0
-        if hours != hours or hours < 0:
-            hours = 0.0
-        effort += hours
-        ref = str(spec.get("reframed_description") or "").strip()
-        if not ref:
-            continue
-        if core:
-            n = min(48, len(core))
-            prefix = core[:n]
-            if prefix and ref.lower().startswith(prefix.lower()):
-                rest = ref[len(core) :].strip() if len(ref) >= len(core) else ref
-                additions.append(rest or ref)
-            else:
-                additions.append(ref)
-        else:
-            additions.append(ref)
-    effort = max(0.0, min(168.0, effort))
-    reframed = " ".join(x for x in [core, *additions] if x).strip()
-    if not reframed:
-        reframed = core or "stacked moves"
-    return {
-        "label": " + ".join(labels)[:160] or "Stacked moves",
-        "rationale": " ".join(rationales)[:240] or "Stacked moves, rescored together.",
-        "reframed_description": reframed[:4000],
-        "effort_hours": effort,
-    }
 
 
 def _fallback_coach_specs(idea: str, signals: dict[str, Any] | None = None) -> list[dict[str, Any]]:
