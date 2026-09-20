@@ -1,4 +1,4 @@
-"""Prior Art — FastAPI app. One process, no other services.
+"""Win the North — FastAPI app. One process, no other services.
 
     uvicorn server:app --reload
 """
@@ -38,7 +38,7 @@ if SENTRY_DSN:
         integrations=[StarletteIntegration(), FastApiIntegration()],
     )
 
-app = FastAPI(title="Prior Art", version="0.1.1", docs_url=None, redoc_url=None)
+app = FastAPI(title="Win the North", version="0.1.1", docs_url=None, redoc_url=None)
 _map_cache: dict | None = None
 
 
@@ -64,6 +64,64 @@ class AskBody(BaseModel):
 class CoachBody(BaseModel):
     text: str = Field(default="", max_length=8000)
     time_budget_hours: float | None = Field(default=None, ge=0, le=168)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _nuls(cls, v):
+        if v is None:
+            return ""
+        if not isinstance(v, str):
+            return v
+        return _clean_text(v)
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(default="user", max_length=32)
+    content: str = Field(default="", max_length=4000)
+
+    @field_validator("role", "content", mode="before")
+    @classmethod
+    def _nuls(cls, v):
+        if v is None:
+            return ""
+        if not isinstance(v, str):
+            return v
+        return _clean_text(v)
+
+
+class ChatBody(BaseModel):
+    messages: list[ChatMessage] = Field(default_factory=list, max_length=20)
+    idea: str = Field(default="", max_length=8000)
+    question: str = Field(default="", max_length=8000)
+
+    @field_validator("idea", mode="before")
+    @classmethod
+    def _idea(cls, v):
+        if v is None:
+            return ""
+        if not isinstance(v, str):
+            return v
+        return _clean_text(v)
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def _question(cls, v):
+        if v is None:
+            return ""
+        if not isinstance(v, str):
+            return v
+        return _clean_text(v)
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _msgs(cls, v):
+        if v is None:
+            return []
+        return v
+
+
+class SearchBody(BaseModel):
+    text: str = Field(default="", max_length=8000)
 
     @field_validator("text", mode="before")
     @classmethod
@@ -160,6 +218,7 @@ def api_ask(body: AskBody) -> JSONResponse:
                         "point": {"x": float(xy[0]), "y": float(xy[1])},
                         "neighbours": engine.neighbour_records(pairs),
                         "probability": round(n_f / n, 4),
+                        "score": engine.percentile_score(n_f / n),
                         "model": {
                             "auc": None,
                             "auc_spread": [],
@@ -180,6 +239,7 @@ def api_ask(body: AskBody) -> JSONResponse:
                         "point": {"x": 0.0, "y": 0.0},
                         "neighbours": [],
                         "probability": 0.0,
+                        "score": 0,
                         "model": {"auc": None, "auc_spread": [], "n_train": 0, "n_finalists": 0},
                         "backend": "tfidf",
                         "source": "tfidf",
@@ -206,12 +266,51 @@ def api_coach(body: CoachBody) -> JSONResponse:
             json_safe(
                 {
                     "baseline": 0.0,
+                    "baseline_score": 0,
                     "moves": [],
                     "hours_remaining": remaining,
                     "time_budget_hours": round(max(0.0, budget), 2),
                 }
             )
         )
+
+
+@app.post("/api/chat")
+def api_chat(body: ChatBody) -> JSONResponse:
+    from engine import engine, json_safe
+
+    question = (body.question or "").strip()
+    if question:
+        try:
+            return JSONResponse(json_safe(engine.answer_question(question)))
+        except Exception as extra:
+            print(f"chat question failed ({extra})")
+            return JSONResponse(
+                {"reply": "Couldn't answer from the data.", "framings": [], "citations": []}
+            )
+    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    if not any(str(m.get("content") or "").strip() for m in messages):
+        raise HTTPException(status_code=400, detail="provide a message")
+    try:
+        return JSONResponse(json_safe(engine.chat(messages, idea=body.idea)))
+    except Exception as extra:
+        print(f"chat failed ({extra})")
+        return JSONResponse({"reply": "Chat is quiet. Place it still works.", "framings": []})
+
+
+@app.post("/api/search")
+def api_search(body: SearchBody) -> JSONResponse:
+    from engine import engine, json_safe
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="provide a description")
+    empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
+    try:
+        return JSONResponse(json_safe(engine.search(text)))
+    except Exception as exc:
+        print(f"search failed ({exc})")
+        return JSONResponse(json_safe(empty))
 
 
 app.mount("/web", StaticFiles(directory=WEB), name="web")

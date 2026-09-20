@@ -22,6 +22,8 @@
   const probPanel = document.getElementById("prob-panel");
   const probNum = document.getElementById("prob-num");
   const probCaveat = document.getElementById("prob-caveat");
+  const probBase = document.getElementById("prob-base");
+  const probWhy = document.getElementById("prob-why");
   const probMeta = document.getElementById("prob-meta");
   const corpusMeta = document.getElementById("corpus-meta");
   const chartsEl = document.getElementById("charts");
@@ -46,14 +48,27 @@
   let askInFlight = false;
   let coachInFlight = false;
 
-  const GOLD = "#E8B33D";
-  const FAINT = "#626C78";
-  const INK = "#ECEFF3";
+  const GOLD = "#C44B32";
+  const FAINT = "#5F8A88";
+  const INK = "#2A1810";
+  const PREVIEW = "#3D9B96";
+  const SAND = "#E8D4B8";
+  const SKY = "#B8E8F2";
+  // Map encoding: these two fills are used for NOTHING except base corpus dots.
+  const WINNER_FILL = "#C62828";
+  const NONWINNER_FILL = "#1E5AA8";
+  // Search halos: not red, not blue, not white. Distinct from the base encoding.
+  const SEARCH_PALETTE = ["#D4A017", "#2E8B57", "#8E44AD", "#1A9B8A", "#C47A0A"];
+  const HALO_ALPHA_CAP = 0.28;
   const YEAR_MIN = 2014;
   const YEAR_MAX = 2025;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   let mapData = { points: [], bounds: { x0: -1, y0: -1, x1: 1, y1: 1 } };
+  let pointBySlug = new Map();
+  let themeLayers = [];
+  let themeInFlight = false;
+  let themeSeq = 0;
   let query = null;
   let hover = null;
   let pulse = 0;
@@ -72,6 +87,26 @@
   const zoomOutBtn = document.getElementById("zoom-out");
   const zoomResetBtn = document.getElementById("zoom-reset");
   const zoomLevel = document.getElementById("zoom-level");
+  const themeForm = document.getElementById("theme-search");
+  const themeInput = document.getElementById("theme-input");
+  const themeBtn = document.getElementById("theme-btn");
+  const themeNote = document.getElementById("theme-note");
+  const themeLegend = document.getElementById("theme-legend");
+  const chatPanel = document.getElementById("chat-panel");
+  const chatFab = document.getElementById("chat-fab");
+  const chatList = document.getElementById("chat-list");
+  const chatHint = document.getElementById("chat-hint");
+  const chatForm = document.getElementById("chat-form");
+  const chatInput = document.getElementById("chat-input");
+  const chatBtn = document.getElementById("chat-btn");
+  const chatStatus = document.getElementById("chat-status");
+  const compareEl = document.getElementById("compare");
+  const compareClear = document.getElementById("compare-clear");
+  let preview = null;
+  let lastPreviewText = "";
+  let chatThread = [];
+  let chatInFlight = false;
+  let previewInFlight = false;
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -176,12 +211,114 @@
         best = { ...query.point, title: "Your idea", year: "", you: true };
       }
     }
+    if (preview && preview.point) {
+      const s = project(preview.point);
+      if (Math.hypot(s.x - mx, s.y - my) < 12 * Math.sqrt(view.scale)) {
+        best = { ...preview.point, title: "Preview idea", year: "", you: true, preview: true };
+      }
+    }
     return best;
   }
 
   function radii() {
     const s = Math.min(3, Math.sqrt(view.scale));
     return { mute: 2.2 * s, finalist: 4.4 * s, neighbour: 6 * s, you: 6 * s };
+  }
+
+  function indexMapPoints() {
+    pointBySlug = new Map();
+    for (const p of mapData.points || []) {
+      if (p && p.slug) pointBySlug.set(p.slug, p);
+    }
+  }
+
+  function hexRgb(hex) {
+    const h = String(hex || "").replace("#", "");
+    if (h.length === 3) {
+      return [
+        parseInt(h[0] + h[0], 16),
+        parseInt(h[1] + h[1], 16),
+        parseInt(h[2] + h[2], 16),
+      ];
+    }
+    if (h.length < 6) return [212, 160, 23];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function nextSearchColor() {
+    const used = new Set(themeLayers.map((l) => l.color));
+    return SEARCH_PALETTE.find((c) => !used.has(c)) || SEARCH_PALETTE[0];
+  }
+
+  function ideaMatchesSearch(layer, ideaText) {
+    const q = String((layer && layer.query) || "").trim().toLowerCase();
+    const t = String(ideaText || "").trim().toLowerCase();
+    if (!q || !t || q.length < 3) return false;
+    if (t.includes(q) || (t.length >= 3 && q.includes(t))) return true;
+    const tokens = q.split(/[^a-z0-9]+/i).filter((w) => w.length >= 4);
+    if (!tokens.length) return false;
+    return tokens.every((tok) => t.includes(tok));
+  }
+
+  function drawHalo(ctx, x, y, baseR, t, rgb) {
+    const tt = t > 1 ? 1 : t < 0 ? 0 : t;
+    const rad = baseR + 5 + 6 * tt;
+    const a = Math.min(HALO_ALPHA_CAP, 0.10 + 0.18 * tt);
+    ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawOwnOutline(ctx, pt, stroke, withPulse) {
+    if (!pt) return;
+    const s = project(pt);
+    const rad = radii().you;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.setLineDash([]);
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
+    ctx.stroke();
+    if (withPulse && !reducedMotion && pulse < 1) {
+      ctx.globalAlpha = Math.max(0, 1 - pulse);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, rad + 4 + pulse * 16, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function setThemeNote(text) {
+    if (!themeNote) return;
+    const msg = String(text || "").trim();
+    themeNote.hidden = !msg;
+    themeNote.textContent = msg;
+    themeNote.classList.toggle("is-loading", msg.endsWith("…") && !reducedMotion);
+  }
+
+  function renderThemeLegend() {
+    if (!themeLegend) return;
+    themeLegend.hidden = themeLayers.length === 0;
+    themeLegend.innerHTML = themeLayers.map((layer) => {
+      const label = escapeHtml(layer.query);
+      return `<li data-id="${layer.id}">
+        <i class="theme-dot" style="background:${layer.color}"></i>
+        <span>${label}</span>
+        <button type="button" class="theme-x" data-remove="${layer.id}" aria-label="Remove ${label}">×</button>
+      </li>`;
+    }).join("");
+  }
+
+  function removeThemeLayer(id) {
+    themeLayers = themeLayers.filter((l) => l.id !== id);
+    renderThemeLegend();
+    draw();
   }
 
   function draw() {
@@ -191,78 +328,84 @@
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
+    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.45);
+    sky.addColorStop(0, SKY);
+    sky.addColorStop(1, SAND);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowBlur = 0;
+    ctx.setLineDash([]);
     const r = radii();
     const pts = visiblePoints();
-    const neighbourSlugs = new Set((query?.neighbours || []).map((n) => n.slug));
-    const focused = !!(query && query.point);
-
     const pad = 24;
     const onScreen = (s) => s.x > -pad && s.y > -pad && s.x < w + pad && s.y < h + pad;
 
+    // 1. BASE: every corpus project is a FILLED circle. Red = finalist, blue = not.
+    //    Never stroke a base dot. Never recolor a base dot for search or neighbours.
     for (const p of pts) {
-      if (p.finalist || neighbourSlugs.has(p.slug)) continue;
       const s = project(p);
       if (!onScreen(s)) continue;
-      ctx.globalAlpha = focused ? 0.28 : 1;
-      ctx.fillStyle = FAINT;
+      ctx.fillStyle = p.finalist ? WINNER_FILL : NONWINNER_FILL;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, r.mute, 0, Math.PI * 2);
+      ctx.arc(s.x, s.y, p.finalist ? r.finalist : r.mute, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.globalAlpha = 1;
-
-    for (const p of pts) {
-      if (!p.finalist) continue;
-      const s = project(p);
-      if (!onScreen(s)) continue;
-      ctx.globalAlpha = focused && !neighbourSlugs.has(p.slug) ? 0.4 : 1;
-      ctx.fillStyle = GOLD;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, neighbourSlugs.has(p.slug) ? r.neighbour : r.finalist, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
 
     if (query && query.point) {
       const origin = project(query.point);
-      ctx.strokeStyle = "rgba(232,179,61,0.35)";
+      ctx.strokeStyle = "rgba(42,24,16,0.28)";
       ctx.lineWidth = 1;
-      for (const n of query.neighbours) {
-        const p = mapData.points.find((x) => x.slug === n.slug);
+      for (const n of query.neighbours || []) {
+        const p = pointBySlug.get(n.slug) || (mapData.points || []).find((x) => x.slug === n.slug);
         if (!p || !inYear(p)) continue;
         const t = project(p);
         ctx.beginPath();
         ctx.moveTo(origin.x, origin.y);
         ctx.lineTo(t.x, t.y);
         ctx.stroke();
-        ctx.strokeStyle = GOLD;
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, 7, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeStyle = "rgba(232,179,61,0.35)";
       }
-
-      const ring = 10 + pulse * 18;
-      ctx.strokeStyle = `rgba(232,179,61,${1 - pulse})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(origin.x, origin.y, ring, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.shadowColor = "rgba(232,179,61,0.55)";
-      ctx.shadowBlur = 16;
-      ctx.fillStyle = GOLD;
-      ctx.beginPath();
-      ctx.arc(origin.x, origin.y, r.you, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(origin.x, origin.y, r.you + 3, 0, Math.PI * 2);
-      ctx.stroke();
     }
 
+    // 2. SEARCH HALOS: transparent colored discs, larger than the base dot, alpha-capped.
+    //    Additive-lite via overlapping source-over fills — never lighter (washes to white).
+    if (themeLayers.length) {
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      for (const layer of themeLayers) {
+        const maxSim = Number(layer.max_sim) || 0;
+        if (!(maxSim > 0) || !Array.isArray(layer.matches)) continue;
+        const rgb = hexRgb(layer.color);
+        if (rgb.some((c) => !Number.isFinite(c))) continue;
+        const seen = new Set();
+        for (const m of layer.matches) {
+          if (!m || seen.has(m.slug)) continue;
+          seen.add(m.slug);
+          const p = pointBySlug.get(m.slug);
+          if (!p || !inYear(p)) continue;
+          const s = project(p);
+          if (!onScreen(s)) continue;
+          const sim = Number(m.sim);
+          const t = sim / maxSim;
+          if (!Number.isFinite(t) || t <= 0) continue;
+          const baseR = p.finalist ? r.finalist : r.mute;
+          drawHalo(ctx, s.x, s.y, baseR, t, rgb);
+        }
+        // Own-idea / preview may also match a search: halo under the outline, never a fill of the marker.
+        if (query && query.point && ideaMatchesSearch(layer, lastIdeaText)) {
+          const s = project(query.point);
+          if (onScreen(s)) drawHalo(ctx, s.x, s.y, r.you, 1, rgb);
+        }
+        if (preview && preview.point && ideaMatchesSearch(layer, lastPreviewText)) {
+          const s = project(preview.point);
+          if (onScreen(s)) drawHalo(ctx, s.x, s.y, r.you, 1, rgb);
+        }
+      }
+      ctx.restore();
+    }
+
+    // 3. OWN-IDEA: outline only, no fill. Nothing else on the map uses this style.
     if (ghost && ghost.from && ghost.to && query && query.point) {
       const a = project(ghost.from);
       const b = project(ghost.to);
@@ -270,20 +413,39 @@
       const gx = a.x + (b.x - a.x) * t;
       const gy = a.y + (b.y - a.y) * t;
       ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = "rgba(236,239,243,0.55)";
+      ctx.strokeStyle = "rgba(42,24,16,0.4)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(gx, gy);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(236,239,243,0.2)";
-      ctx.strokeStyle = GOLD;
+      ctx.strokeStyle = PREVIEW;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(gx, gy, r.you, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (preview && preview.point && query && query.point) {
+      const a = project(query.point);
+      const b = project(preview.point);
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      ctx.setLineDash([6, 6]);
+      ctx.strokeStyle = "rgba(61,155,150,0.55)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(gx, gy, 7, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      drawOwnOutline(ctx, preview.point, PREVIEW, false);
+    }
+
+    if (query && query.point) {
+      drawOwnOutline(ctx, query.point, INK, true);
     }
   }
 
@@ -303,7 +465,7 @@
     }
     tooltip.hidden = false;
     if (p.you) {
-      tooltip.innerHTML = `<div class="tip-title">Your idea</div>`;
+      tooltip.innerHTML = `<div class="tip-title">${p.preview ? "Preview idea" : "Your idea"}</div>`;
     } else {
       const badge = p.finalist ? `<span class="tip-badge">Finalist</span>` : "";
       tooltip.innerHTML = `<div class="tip-title">${escapeHtml(p.title || "")}</div>
@@ -451,12 +613,12 @@
     el.classList.toggle("is-empty", !item);
     if (!item) {
       el.innerHTML = `
-        <p class="twin-kicker">${kind === "win" ? "Closest that made it" : "Closest that didn’t"}</p>
+        <p class="twin-kicker">${kind === "win" ? "Closest finalist" : "Closest not a finalist"}</p>
         <p class="twin-title">${kind === "win" ? "No finalist in the nearest five." : "No non-finalist in the nearest five."}</p>`;
       return;
     }
     el.innerHTML = `
-      <p class="twin-kicker">${kind === "win" ? "Closest that made it" : "Closest that didn’t"}</p>
+      <p class="twin-kicker">${kind === "win" ? "Closest finalist" : "Closest not a finalist"}</p>
       <p class="twin-title">${escapeHtml(item.title || "Untitled")}</p>
       <p class="twin-meta">${escapeHtml(String(item.year || ""))} · ${escapeHtml(fmtSim(item.similarity))}</p>
       <p class="twin-tag">${escapeHtml(item.tagline || "")}</p>`;
@@ -530,13 +692,30 @@
   }
 
   function formatDelta(delta) {
-    const pct = (Number(delta) || 0) * 100;
-    const tenths = Math.round(pct * 10) / 10;
-    const abs = Math.abs(tenths);
-    const body = Number.isInteger(abs) ? String(abs) : abs.toFixed(1);
-    if (tenths > 0) return `+${body}%`;
-    if (tenths < 0) return `−${body}%`;
-    return "0%";
+    const n = Math.round(Number(delta) || 0);
+    if (n > 0) return `+${n}`;
+    if (n < 0) return `−${Math.abs(n)}`;
+    return "0";
+  }
+
+  function scoreOf(data) {
+    const s = Number(data && data.score);
+    if (Number.isFinite(s)) return Math.max(0, Math.min(100, Math.round(s)));
+    return null;
+  }
+
+  function formatScoreMove(move, baselineScore) {
+    const neu = Number(move && move.new_score);
+    const base = Number(baselineScore);
+    if (Number.isFinite(neu) && Number.isFinite(base)) {
+      const from = Math.round(base);
+      const to = Math.round(neu);
+      const d = to - from;
+      const signed = d > 0 ? `+${d}` : d < 0 ? `−${Math.abs(d)}` : "0";
+      return `${from} → ${to} (${signed})`;
+    }
+    if (move && move.score_delta != null) return formatDelta(move.score_delta);
+    return formatDelta((Number(move && move.delta) || 0) * 100);
   }
 
   function setCoachOpen(open) {
@@ -601,10 +780,12 @@
       const effort = Number(move.effort_hours);
       const feasible = aware ? effort <= budget : true;
       li.className = `card coach-card${aware && !feasible ? " is-late" : ""}`;
-      const pct = (Number(move.delta) || 0) * 100;
-      const signed = formatDelta(move.delta);
-      const down = pct < -0.05;
-      const zero = Math.abs(pct) < 0.05;
+      const scoreDelta = move.score_delta != null
+        ? Number(move.score_delta)
+        : (Number(move.delta) || 0) * 100;
+      const signed = formatScoreMove(move, payload && payload.baseline_score);
+      const down = scoreDelta < -0.05;
+      const zero = Math.abs(scoreDelta) < 0.05;
       let extra = "";
       if (aware) {
         extra = `<div class="coach-meta">
@@ -755,23 +936,33 @@
 
   function renderProb(data) {
     probPanel.hidden = false;
+    const score = scoreOf(data);
+    probNum.textContent = score == null ? "—" : String(score);
     const p = Number(data && data.probability);
-    if (!Number.isFinite(p)) {
-      probNum.textContent = "—";
-    } else {
-      const pct = Math.round(Math.max(0, Math.min(1, p)) * 100);
-      probNum.textContent = `${pct}%`;
-    }
     const m = (data && data.model) || {};
     const aucNum = m.auc == null ? NaN : Number(m.auc);
     const auc = Number.isFinite(aucNum) ? aucNum.toFixed(2) : "—";
-    const n = m.n_train != null ? fmtN(m.n_train) : "3,443";
-    const spread = Array.isArray(m.auc_spread) && m.auc_spread.length === 2
-      && Number.isFinite(Number(m.auc_spread[0])) && Number.isFinite(Number(m.auc_spread[1]))
-      ? ` (${Number(m.auc_spread[0]).toFixed(2)}–${Number(m.auc_spread[1]).toFixed(2)})`
-      : "";
+    if (probBase) {
+      if (score == null) {
+        probBase.textContent = "Finalist Score is a percentile of the calibrated classifier, not a chance of winning.";
+      } else {
+        probBase.textContent = `resembles past finalists more than ${score}% of all HTN projects (2014–2025)`;
+      }
+    }
     if (probCaveat) {
-      probCaveat.textContent = `AUC ${auc}${spread} · leave-one-year-out · ${n} projects`;
+      let cal = "—";
+      if (Number.isFinite(p)) {
+        cal = `${(Math.max(0, Math.min(1, p)) * 100).toFixed(1)}%`;
+      }
+      probCaveat.textContent = `calibrated finalist probability: ${cal} · AUC ${auc} · leave-one-year-out`;
+    }
+    if (probWhy) {
+      probWhy.innerHTML = "";
+      for (const line of (data.why || [])) {
+        const li = document.createElement("li");
+        li.textContent = String(line);
+        probWhy.appendChild(li);
+      }
     }
     const bits = [];
     const g = data.github;
@@ -782,8 +973,7 @@
     } else if (g && !g.ok) {
       bits.push(`GitHub unread (${g.error || "failed"}). Used the prompt only.`);
     }
-    if (Array.isArray(data.why) && data.why.length) bits.push(String(data.why[0]));
-    probMeta.textContent = bits.join(" ");
+    if (probMeta) probMeta.textContent = bits.join(" ");
   }
 
   function escapeHtml(s) {
@@ -873,6 +1063,80 @@
     });
   }
 
+  if (themeLegend) {
+    themeLegend.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-remove]");
+      if (!btn) return;
+      removeThemeLayer(Number(btn.getAttribute("data-remove")));
+    });
+  }
+
+  if (themeForm) {
+    themeForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (themeInFlight) return;
+      const text = (themeInput && themeInput.value.trim()) || "";
+      if (!text) {
+        setThemeNote("no matches");
+        return;
+      }
+      themeInFlight = true;
+      if (themeBtn) themeBtn.disabled = true;
+      setThemeNote("Highlighting…");
+      try {
+        const res = await fetch("/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        let data = {};
+        try {
+          data = await res.json();
+        } catch (_) {
+          data = {};
+        }
+        const seen = new Set();
+        const matches = (Array.isArray(data.matches) ? data.matches : []).filter((m) => {
+          if (!m || !m.slug || seen.has(m.slug)) return false;
+          seen.add(m.slug);
+          return true;
+        });
+        const maxSim = Number(data.max_sim);
+        if (!res.ok || !matches.length || !(maxSim > 0)) {
+          setThemeNote("no matches");
+          return;
+        }
+        const key = text.toLowerCase();
+        const existing = themeLayers.find((l) => l.key === key);
+        if (existing) {
+          existing.matches = matches;
+          existing.max_sim = maxSim;
+          existing.query = text;
+          themeLayers = themeLayers.filter((l) => l !== existing).concat(existing);
+        } else {
+          if (themeLayers.length >= 5) themeLayers.shift();
+          themeSeq += 1;
+          themeLayers.push({
+            id: themeSeq,
+            key,
+            query: text,
+            color: nextSearchColor(),
+            matches,
+            max_sim: maxSim,
+          });
+        }
+        setThemeNote("");
+        renderThemeLegend();
+        draw();
+      } catch (_) {
+        setThemeNote("no matches");
+      } finally {
+        themeInFlight = false;
+        if (themeBtn) themeBtn.disabled = false;
+      }
+    });
+  }
+
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     if (askInFlight) return;
@@ -912,6 +1176,9 @@
       lastIdeaText = text;
       pulse = 0;
       ghost = null;
+      preview = null;
+      lastPreviewText = "";
+      renderCompare(null, null);
       cancelAnimationFrame(ghostRaf);
       cancelAnimationFrame(raf);
       renderTwins(data.neighbours || []);
@@ -976,12 +1243,235 @@
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("is-on", b === btn));
-      const view = btn.dataset.view;
-      document.getElementById("view-explore").hidden = view !== "explore";
-      document.getElementById("view-findings").hidden = view !== "findings";
-      if (view === "explore") resize();
+      const viewName = btn.dataset.view;
+      const explore = document.getElementById("view-explore");
+      const findings = document.getElementById("view-findings");
+      findings.hidden = viewName !== "findings";
+      explore.hidden = viewName === "findings";
+      if (viewName === "explore") resize();
     });
   });
+
+  function setChatOpen(open) {
+    if (!chatPanel) return;
+    chatPanel.hidden = !open;
+    if (chatFab) {
+      chatFab.classList.toggle("is-open", open);
+      chatFab.setAttribute("aria-expanded", open ? "true" : "false");
+      chatFab.setAttribute("aria-label", open ? "Close chat" : "Open chat");
+    }
+    if (open && chatInput) chatInput.focus();
+  }
+
+  if (chatFab) {
+    chatFab.addEventListener("click", () => {
+      setChatOpen(!!(chatPanel && chatPanel.hidden));
+    });
+  }
+  const chatClose = document.getElementById("chat-close");
+  if (chatClose) chatClose.addEventListener("click", () => setChatOpen(false));
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && chatPanel && !chatPanel.hidden) setChatOpen(false);
+  });
+
+  function pctLabel(data) {
+    const p = Number(data && data.probability);
+    if (!Number.isFinite(p)) return "—";
+    return `${Math.round(Math.max(0, Math.min(1, p)) * 100)}%`;
+  }
+
+  function neighbourBits(data) {
+    const ns = (data && data.neighbours) || [];
+    const k = ns.filter((n) => n.finalist).length;
+    const fin = ns.find((n) => n.finalist);
+    const no = ns.find((n) => !n.finalist);
+    const sig = (data && data.signals) || {};
+    const tags = (sig.tags || []).slice(0, 6).join(", ");
+    return {
+      score: scoreOf(data),
+      pct: pctLabel(data),
+      hardware: sig.hardware ? "hardware" : "software",
+      tags: tags || "no tags",
+      nearestFin: fin ? fin.title : "none in nearest five",
+      nearestNo: no ? no.title : "none in nearest five",
+      k: `${k}/${ns.length || 5} neighbours were finalists`,
+    };
+  }
+
+  function renderCompare(original, previewData) {
+    if (!compareEl) return;
+    if (!original || !previewData) {
+      compareEl.hidden = true;
+      compareEl.innerHTML = "";
+      if (compareClear) compareClear.hidden = true;
+      return;
+    }
+    const a = neighbourBits(original);
+    const b = neighbourBits(previewData);
+    const col = (kicker, s) => `
+      <div class="compare-col">
+        <p class="compare-kicker">${kicker}</p>
+        <p class="compare-stat"><strong>${escapeHtml(s.score == null ? "—" : String(s.score))}</strong> Finalist Score</p>
+        <p class="compare-stat">calibrated finalist probability: ${escapeHtml(s.pct)}</p>
+        <p class="compare-stat">${escapeHtml(s.hardware)} · ${escapeHtml(s.tags)}</p>
+        <p class="compare-stat">Nearest finalist: ${escapeHtml(s.nearestFin)}</p>
+        <p class="compare-stat">Nearest not a finalist: ${escapeHtml(s.nearestNo)}</p>
+        <p class="compare-stat">${escapeHtml(s.k)}</p>
+      </div>`;
+    compareEl.innerHTML = col("Original", a) + col("Preview", b);
+    compareEl.hidden = false;
+    if (compareClear) compareClear.hidden = false;
+  }
+
+  function clearPreview() {
+    preview = null;
+    lastPreviewText = "";
+    renderCompare(null, null);
+    draw();
+  }
+
+  function appendChat(role, html) {
+    if (!chatList) return;
+    const li = document.createElement("li");
+    li.className = "chat-msg " + (role === "user" ? "is-you" : "is-bot");
+    li.innerHTML = html;
+    chatList.appendChild(li);
+    if (chatHint) chatHint.hidden = true;
+    chatList.scrollTop = chatList.scrollHeight;
+    return li;
+  }
+
+  function renderFramings(framings) {
+    if (!framings || !framings.length) return "";
+    return framings.map((f) => `
+      <div class="chat-framing">
+        <p><strong>${escapeHtml(f.label || "Framing")}</strong> — ${escapeHtml(f.rationale || "")}</p>
+        <p>${escapeHtml(f.text || "")}</p>
+        <button type="button" class="preview-btn" data-preview-text="${escapeHtml(f.text || "")}">Preview this idea</button>
+      </div>
+    `).join("");
+  }
+
+  async function previewIdea(text) {
+    const idea = String(text || "").trim();
+    if (!idea || previewInFlight) return;
+    if (!query) {
+      if (chatStatus) {
+        chatStatus.hidden = false;
+        chatStatus.textContent = "Place an idea on Explore first, then preview a framing.";
+      }
+      return;
+    }
+    previewInFlight = true;
+    if (chatStatus) {
+      chatStatus.hidden = false;
+      chatStatus.classList.add("is-loading");
+      chatStatus.textContent = "Scoring the preview…";
+    }
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: idea, github: "", devpost: "" }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      preview = data;
+      lastPreviewText = idea;
+      renderCompare(query, preview);
+      draw();
+      const quoted = `Finalist Score: original ${scoreOf(query) == null ? "—" : scoreOf(query)} · preview ${scoreOf(preview) == null ? "—" : scoreOf(preview)}. Calibrated probability ${pctLabel(query)} → ${pctLabel(preview)}. Chat did not invent this.`;
+      chatThread.push({ role: "assistant", content: quoted });
+      appendChat("assistant", `<p>${escapeHtml(quoted)}</p>`);
+      if (chatStatus) {
+        chatStatus.hidden = true;
+        chatStatus.classList.remove("is-loading");
+      }
+    } catch (err) {
+      if (chatStatus) {
+        chatStatus.hidden = false;
+        chatStatus.classList.remove("is-loading");
+        chatStatus.textContent = "Could not preview that framing.";
+      }
+      console.error(err);
+    } finally {
+      previewInFlight = false;
+    }
+  }
+
+  if (chatList) {
+    chatList.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-preview-text]");
+      if (!btn) return;
+      previewIdea(btn.getAttribute("data-preview-text") || "");
+    });
+  }
+  if (compareClear) compareClear.addEventListener("click", clearPreview);
+
+  if (chatForm) {
+    chatForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (chatInFlight) return;
+      const text = (chatInput && chatInput.value.trim()) || "";
+      if (!text) {
+        if (chatStatus) {
+          chatStatus.hidden = false;
+          chatStatus.textContent = "Type a message.";
+        }
+        return;
+      }
+      chatInFlight = true;
+      if (chatBtn) chatBtn.disabled = true;
+      chatThread.push({ role: "user", content: text });
+      appendChat("user", `<p>${escapeHtml(text)}</p>`);
+      if (chatInput) chatInput.value = "";
+      if (chatStatus) {
+        chatStatus.hidden = false;
+        chatStatus.classList.add("is-loading");
+        chatStatus.textContent = "Reframing…";
+      }
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: chatThread.slice(-8),
+            idea: lastIdeaText || (input && input.value.trim()) || "",
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const reply = String(data.reply || "Chat is quiet. Place it still works.");
+        const framings = Array.isArray(data.framings) ? data.framings : [];
+        chatThread.push({ role: "assistant", content: reply });
+        appendChat("assistant", `<p>${escapeHtml(reply)}</p>${renderFramings(framings)}`);
+        if (chatStatus) {
+          chatStatus.hidden = true;
+          chatStatus.classList.remove("is-loading");
+        }
+      } catch (err) {
+        appendChat("assistant", "<p>Chat is quiet. Place it still works.</p>");
+        if (chatStatus) {
+          chatStatus.hidden = false;
+          chatStatus.classList.remove("is-loading");
+          chatStatus.textContent = "Chat is quiet. Place it still works.";
+        }
+        console.error(err);
+      } finally {
+        chatInFlight = false;
+        if (chatBtn) chatBtn.disabled = false;
+      }
+    });
+  }
+
+  if (chatInput) {
+    chatInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        chatForm.requestSubmit();
+      }
+    });
+  }
 
   function svgEl(name, attrs, text) {
     const el = document.createElementNS("http://www.w3.org/2000/svg", name);
@@ -995,7 +1485,7 @@
   function svgText(attrs, text, kind) {
     const el = svgEl("text", { ...attrs, class: `chart-${kind}` }, text);
     el.setAttribute("font-size", kind === "label" || kind === "num" ? "12" : "11");
-    el.setAttribute("font-family", kind === "tick" || kind === "num" ? "JetBrains Mono, ui-monospace, monospace" : "Space Grotesk, system-ui, sans-serif");
+    el.setAttribute("font-family", kind === "tick" || kind === "num" ? "JetBrains Mono, ui-monospace, monospace" : "Fraunces, Georgia, serif");
     return el;
   }
 
@@ -1298,6 +1788,7 @@
       if (!mapData || !Array.isArray(mapData.points)) {
         mapData = { points: [], bounds: { x0: -1, y0: -1, x1: 1, y1: 1 } };
       }
+      indexMapPoints();
       const cfg = await cfgRes.json();
       corpusMeta.textContent = `${fmtN(cfg.n)} projects  ·  ${fmtN(cfg.n_finalists)} finalists  ·  ${cfg.source || "corpus"}`;
       updateScrubber();
@@ -1329,6 +1820,7 @@
     } catch (err) {
       corpusMeta.textContent = "Could not load the map.";
       console.error(err);
+      indexMapPoints();
     }
     resize();
     loadFindings();
@@ -1338,5 +1830,74 @@
   if (typeof ResizeObserver !== "undefined" && canvas) {
     new ResizeObserver(() => resize()).observe(canvas);
   }
+
+  (function bindLayoutSplits() {
+    const root = document.documentElement;
+    const rail = document.querySelector(".rail");
+    const splitX = document.getElementById("split-rail-x");
+    const splitY = document.getElementById("split-rail-y");
+    const railScroll = document.getElementById("rail-scroll");
+    const RAIL_MIN = 260;
+    const RAIL_MAX = 720;
+    const MAIN_MIN = 88;
+    try {
+      const w = Number(localStorage.getItem("wtn-rail-w"));
+      if (Number.isFinite(w) && w >= RAIL_MIN) {
+        root.style.setProperty("--rail-w", `${Math.min(RAIL_MAX, w)}px`);
+      }
+      const h = Number(localStorage.getItem("wtn-rail-main-h"));
+      if (Number.isFinite(h) && h >= MAIN_MIN) {
+        root.style.setProperty("--rail-main-h", `${h}px`);
+      }
+    } catch (_) { /* ignore */ }
+
+    function bind(el, kind) {
+      if (!el) return;
+      el.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        el.setPointerCapture(ev.pointerId);
+        document.body.classList.add("is-resizing");
+        if (kind === "y") document.body.classList.add("is-resizing-y");
+        const move = (e) => {
+          if (kind === "x") {
+            const explore = document.querySelector(".explore");
+            if (!explore) return;
+            const left = explore.getBoundingClientRect().left;
+            const next = Math.max(RAIL_MIN, Math.min(RAIL_MAX, e.clientX - left));
+            root.style.setProperty("--rail-w", `${Math.round(next)}px`);
+          } else if (rail && railScroll) {
+            const top = railScroll.getBoundingClientRect().top;
+            const south = document.getElementById("rail-south");
+            const southMin = 120;
+            const maxH = rail.getBoundingClientRect().height - southMin - 48;
+            const next = Math.max(MAIN_MIN, Math.min(maxH, e.clientY - top));
+            root.style.setProperty("--rail-main-h", `${Math.round(next)}px`);
+            if (south) south.style.minHeight = `${southMin}px`;
+          }
+          resize();
+        };
+        const up = () => {
+          document.body.classList.remove("is-resizing", "is-resizing-y");
+          el.removeEventListener("pointermove", move);
+          el.removeEventListener("pointerup", up);
+          el.removeEventListener("pointercancel", up);
+          try {
+            const w = root.style.getPropertyValue("--rail-w").trim();
+            const h = root.style.getPropertyValue("--rail-main-h").trim();
+            if (w.endsWith("px")) localStorage.setItem("wtn-rail-w", String(parseInt(w, 10)));
+            if (h.endsWith("px")) localStorage.setItem("wtn-rail-main-h", String(parseInt(h, 10)));
+          } catch (_) { /* ignore */ }
+          resize();
+        };
+        el.addEventListener("pointermove", move);
+        el.addEventListener("pointerup", up);
+        el.addEventListener("pointercancel", up);
+      });
+    }
+    bind(splitX, "x");
+    bind(splitY, "y");
+  })();
+
   boot();
 })();

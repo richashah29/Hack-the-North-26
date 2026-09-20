@@ -12,6 +12,7 @@ import os
 import re
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,16 @@ MAP_PATH = DATA / "map.json"
 EMB_PATH = DATA / "embeddings.npy"
 MODEL_PATH = DATA / "model.pkl"
 EVENT_PATH = DATA / "event.json"
+FINDINGS_PATH = DATA / "findings.json"
+
+GROUND_RULES = (
+    "Use ONLY the CONTEXT below. If the answer isn't in it, say it's not in the data. "
+    "Do not use outside knowledge. Do not invent projects, prizes, or numbers. "
+    "Cite projects by name and year from CONTEXT. "
+    "Never say a project 'won' a specific sponsor prize — we only know finalist status. "
+    "Never invent a probability, percentage, or score. If you cite a number, copy it "
+    "exactly from CONTEXT. Classifier scores are injected later, not by you."
+)
 
 
 def json_safe(obj: Any) -> Any:
@@ -88,6 +99,40 @@ def finite_unit(value: Any, default: float = 0.0) -> float:
     if val != val or val == float("inf") or val == float("-inf"):
         return default
     return max(0.0, min(1.0, val))
+
+
+def _finalist_proba(clf, X: np.ndarray) -> np.ndarray:
+    """P(finalist) from the fitted classifier. Does not change the model."""
+    proba = clf.predict_proba(X)
+    classes = list(getattr(clf, "classes_", [0, 1]))
+    if 1 in classes:
+        idx = classes.index(1)
+    elif True in classes:
+        idx = classes.index(True)
+    else:
+        idx = min(1, int(proba.shape[1]) - 1) if getattr(proba, "ndim", 1) > 1 else 0
+    p = np.asarray(proba[:, idx] if getattr(proba, "ndim", 1) > 1 else proba, dtype=np.float64)
+    p = np.where(np.isfinite(p), p, 0.0)
+    return np.clip(p, 0.0, 1.0)
+
+
+def percentile_rank(p: float, dist: np.ndarray) -> int:
+    """Fraction of dist with value <= p, times 100, rounded to 0–100."""
+    if dist is None:
+        return 0
+    arr = np.asarray(dist, dtype=np.float64).ravel()
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return 0
+    try:
+        p_f = float(p)
+    except (TypeError, ValueError):
+        return 0
+    if p_f != p_f or p_f == float("inf") or p_f == float("-inf"):
+        return 0
+    frac = float(np.searchsorted(arr, p_f, side="right")) / float(arr.size)
+    return int(round(max(0.0, min(1.0, frac)) * 100.0))
+
 
 TECH_HINTS = (
     "python",
@@ -142,6 +187,17 @@ HARDWARE_HINTS = (
     "cane",
     "robot arm",
     "quadruped",
+)
+
+VIDEO_HINTS = (
+    "youtube",
+    "demo video",
+    "has a video",
+    "filmed a demo",
+    "live demo",
+    "screen recording",
+    "vimeo",
+    "loom.com",
 )
 
 
@@ -209,6 +265,7 @@ def parse_signals(text: str, repo: dict[str, Any] | None = None) -> dict[str, An
             if key not in tags:
                 tags.append(key)
     hardware = bool(repo and repo.get("hardware")) or any(h in lowered for h in HARDWARE_HINTS)
+    has_video = any(v in lowered for v in VIDEO_HINTS)
     team = 4
     m = re.search(r"\b(?:team(?: size)?|teammates?)\s*(?:of|:)?\s*([1-8])\b", lowered)
     if m:
@@ -216,6 +273,7 @@ def parse_signals(text: str, repo: dict[str, Any] | None = None) -> dict[str, An
     has_repo = 1.0 if (repo and repo.get("ok")) else (1.0 if "github" in lowered else 0.5)
     return {
         "hardware": hardware,
+        "has_video": has_video,
         "tags": tags,
         "team_size": team,
         "has_repo": has_repo,
@@ -240,7 +298,7 @@ def _structured_features(project: Project) -> list[float]:
 def query_features(signals: dict[str, Any], year: int = 2026) -> list[float]:
     return [
         float(signals["team_size"]),
-        0.5,
+        1.0 if signals.get("has_video") else 0.5,
         float(signals["has_repo"]),
         float(signals["n_tech"]),
         float(signals["length"]),
@@ -272,6 +330,12 @@ def score_from_signals(projects: list[Project], signals: dict[str, Any]) -> tupl
         why.append(f"software-shaped projects finalisted at {sw_rate:.0%} in this corpus")
     else:
         why.append(f"corpus base rate is {prior:.0%} finalists")
+    if signals.get("has_video"):
+        vid_rate = _group_rate(projects, lambda p: p.has_video)
+        if vid_rate is not None:
+            why.append(f"projects with a demo video finalisted at {vid_rate:.0%} here")
+            if vid_rate > rate:
+                rate = 0.6 * rate + 0.4 * vid_rate
 
     tags = [t for t in signals.get("tags") or [] if t]
     if tags:
@@ -293,7 +357,7 @@ def score_from_signals(projects: list[Project], signals: dict[str, Any]) -> tupl
             if notable:
                 why.append("stack vs outcome: " + "; ".join(notable[:3]))
             else:
-                why.append("named stack tags are not strongly tied to winning here")
+                why.append("named stack tags are not strongly tied to finalist status here")
     why.append("neighbours are context only — similarity is not the score")
     return float(max(0.03, min(0.55, rate))), why
 
@@ -342,6 +406,10 @@ class Engine:
         self.openai_ok = bool((os.getenv("OPENAI_API_KEY") or "").strip())
         self.source = "sample.json"
         self.embeddings_norm: np.ndarray | None = None
+        self.p_ref: np.ndarray = np.array([], dtype=np.float64)
+        self._search_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._facts_block: str | None = None
+        self._title_index: list[str] | None = None
         # UMAP/numba transform is not thread-safe; FastAPI runs sync routes
         # on a threadpool so two simultaneous /api/ask calls can kill the worker.
         self._umap_lock = threading.Lock()
@@ -368,10 +436,11 @@ class Engine:
             else:
                 print("artifact model.pkl missing — scoring from corpus signals only")
         self._assert_aligned()
+        self._ensure_p_ref()
         n = len(self.projects)
         n_emb = 0 if self.embeddings is None else int(self.embeddings.shape[0])
         n_map = len((self.map_data or {}).get("points") or [])
-        print(f"loaded corpus={n} embeddings={n_emb} map={n_map}")
+        print(f"loaded corpus={n} embeddings={n_emb} map={n_map} p_ref={int(self.p_ref.size)}")
 
     def _fit_fallback(self) -> None:
         texts = [p.embed_text() for p in self.projects]
@@ -485,6 +554,55 @@ class Engine:
             print(f"artifact model.pkl unreadable at {src} ({exc}) — fallback")
             self.model_blob = None
 
+    def _ensure_p_ref(self) -> None:
+        """Sorted corpus P(finalist) from the same classifier /api/ask uses."""
+        blob = self.model_blob or {}
+        raw = blob.get("p_ref")
+        arr = np.array([], dtype=np.float64)
+        if raw is not None:
+            arr = np.asarray(raw, dtype=np.float64).ravel()
+            arr = arr[np.isfinite(arr)]
+            arr = np.clip(arr, 0.0, 1.0)
+        if arr.size and arr.size == len(self.projects):
+            self.p_ref = np.sort(arr)
+            return
+        computed = self._compute_p_ref()
+        self.p_ref = computed
+        if self.model_blob is not None and computed.size:
+            self.model_blob["p_ref"] = computed
+        if computed.size:
+            print(f"p_ref computed n={computed.size}")
+        else:
+            print("p_ref empty — Finalist Score will be 0 until the classifier can score the corpus")
+
+    def _compute_p_ref(self) -> np.ndarray:
+        if not self.model_blob or not self.projects:
+            return np.array([], dtype=np.float64)
+        clf = self.model_blob.get("model")
+        pca = self.model_blob.get("pca")
+        if clf is None or pca is None:
+            return np.array([], dtype=np.float64)
+        embed_space = str(self.model_blob.get("embed_space") or "")
+        if embed_space == "tfidf" or self.embeddings is None:
+            if self.tfidf is None:
+                return np.array([], dtype=np.float64)
+            emb = self.tfidf.toarray()
+        else:
+            emb = np.asarray(self.embeddings, dtype=float)
+        if emb.shape[0] != len(self.projects):
+            return np.array([], dtype=np.float64)
+        try:
+            reduced = pca.transform(emb)
+            struct = np.array([_structured_features(p) for p in self.projects], dtype=float)
+            x = np.hstack([reduced, struct])
+            return np.sort(_finalist_proba(clf, x))
+        except Exception as exc:
+            print(f"p_ref compute skipped ({exc})")
+            return np.array([], dtype=np.float64)
+
+    def percentile_score(self, p: float) -> int:
+        return percentile_rank(p, self.p_ref)
+
     def _map_from_fallback(self) -> dict[str, Any]:
         assert self.fallback_coords is not None
         xs = [float(c[0]) for c in self.fallback_coords]
@@ -564,6 +682,7 @@ class Engine:
             "n_finalists": int(y.sum()),
             "winner": "logreg-tfidf",
             "embed_space": "tfidf",
+            "p_ref": np.sort(_finalist_proba(model, x)),
         }
 
     def neighbour_records(
@@ -622,6 +741,313 @@ class Engine:
         sims = b @ a
         order = np.argsort(-sims)[:k]
         return [(self.projects[i].slug, float(sims[i])) for i in order]
+
+    def search(self, text: str, k: int = 400, min_sim: float = 0.2) -> dict[str, Any]:
+        """Cosine overlay. OpenAI space when embeddings.npy exists; else TF-IDF."""
+        empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
+        q = (text or "").strip()
+        if not q:
+            return json_safe(empty)
+        key = q.casefold()
+        hit = self._search_cache.get(key)
+        if hit is not None:
+            self._search_cache.move_to_end(key)
+            return json_safe(hit)
+        try:
+            out = self._search_uncached(q, k=k, min_sim=min_sim)
+        except Exception as exc:
+            print(f"search failed ({exc})")
+            out = empty
+        if out.get("source") != "empty":
+            self._search_cache[key] = out
+            while len(self._search_cache) > 64:
+                self._search_cache.popitem(last=False)
+        return json_safe(out)
+
+    def _search_uncached(self, q: str, k: int, min_sim: float) -> dict[str, Any]:
+        empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
+        if (
+            self._openai_configured()
+            and self.embeddings is not None
+            and self.embeddings_norm is not None
+        ):
+            try:
+                vec = self._openai_embed(q, timeout=6.0)
+                a = vec / (np.linalg.norm(vec) + 1e-9)
+                sims = self.embeddings_norm @ a
+                return self._pack_search(sims, source="openai", k=k, min_sim=min_sim)
+            except Exception as extra:
+                print(f"search openai skipped ({extra})")
+        try:
+            if self.vectorizer is None or self.tfidf is None:
+                return empty
+            qv = self.vectorizer.transform([q])
+            sims = cosine_similarity(qv, self.tfidf).ravel()
+            return self._pack_search(sims, source="tfidf", k=k, min_sim=min_sim)
+        except Exception as extra:
+            print(f"search tfidf skipped ({extra})")
+            return empty
+
+    def _pack_search(
+        self, sims: np.ndarray, source: str, k: int, min_sim: float
+    ) -> dict[str, Any]:
+        arr = np.asarray(sims, dtype=float).ravel()
+        arr = np.where(np.isfinite(arr), arr, 0.0)
+        if arr.size == 0:
+            return {"matches": [], "max_sim": 0.0, "source": source, "n": 0}
+        k = max(1, min(int(k), arr.size, 400))
+        order = np.argsort(-arr)
+        matches = []
+        max_sim = 0.0
+        for i in order:
+            s = float(arr[i])
+            if s < min_sim:
+                break
+            if len(matches) >= k:
+                break
+            matches.append({"slug": str(self.projects[int(i)].slug), "sim": round(s, 4)})
+            if s > max_sim:
+                max_sim = s
+        return {
+            "matches": matches,
+            "max_sim": round(float(max_sim), 4) if matches else 0.0,
+            "source": source,
+            "n": len(matches),
+        }
+
+    def build_context(
+        self, question_or_idea: str, vec: np.ndarray | None = None
+    ) -> dict[str, Any]:
+        """Compact factual block for Gemini. Numbers come from corpus artifacts."""
+        q = (question_or_idea or "").strip()
+        hits = self._cosine_hits(q, k=20, vec=vec) if q else []
+        titles: list[str] = []
+        lines = [
+            self._what_prior_art(),
+            "",
+            "RELEVANT PROJECTS (title | year | finalist | similarity | tagline):",
+        ]
+        for proj, sim in hits:
+            title = (proj.title or proj.slug or "").replace("|", "/").strip()
+            tag = (proj.tagline or "").replace("|", "/")[:120].strip()
+            flag = "Y" if proj.finalist else "N"
+            year = int(proj.year) if proj.year else 0
+            lines.append(f"- {title} | {year} | {flag} | {sim:.3f} | {tag}")
+            if (proj.title or "").strip():
+                titles.append(proj.title.strip())
+        if not hits:
+            lines.append("- none retrieved")
+        from prizes import prize_prompt_names
+
+        prize_names = prize_prompt_names()
+        lines.extend(["", self._static_facts_block(), "", self._prize_block(prize_names), "", self._event_block()])
+        return {
+            "text": "\n".join(lines)[:12000],
+            "titles": titles,
+            "prizes": list(prize_names),
+        }
+
+    def _what_prior_art(self) -> str:
+        return (
+            "Prior Art maps Hack the North submissions from 2014–2025 and places a new idea "
+            "next to real past projects. Finalist Score (0–100) is the percentile of the "
+            "classifier's P(finalist) versus that corpus; 'finalist' means a top-12 project "
+            "that year. We only know finalist status, not sponsor-track outcomes."
+        )
+
+    def _static_facts_block(self) -> str:
+        if self._facts_block is not None:
+            return self._facts_block
+        n = len(self.projects)
+        n_fin = sum(1 for p in self.projects if p.finalist)
+        base = (100.0 * n_fin / n) if n else 0.0
+        by_year: dict[int, list[int]] = {}
+        for p in self.projects:
+            row = by_year.setdefault(int(p.year), [0, 0])
+            row[0] += 1
+            if p.finalist:
+                row[1] += 1
+        year_bits = ", ".join(
+            f"{y}: {counts[1]}/{counts[0]}" for y, counts in sorted(by_year.items())
+        )
+        auc = None
+        if self.model_blob:
+            try:
+                raw = self.model_blob.get("auc")
+                auc = float(raw) if raw is not None else None
+                if auc is not None and (auc != auc or auc < 0.4 or auc > 1.0):
+                    auc = None
+            except (TypeError, ValueError):
+                auc = None
+        auc_line = f"{auc:.3f} leave-one-year-out" if auc is not None else "not available"
+        lines = [
+            f"CORPUS: {n} projects, {n_fin} finalists, base rate {base:.1f}%.",
+            f"PER-YEAR FINALISTS (finalists/projects): {year_bits}.",
+            f"MODEL AUC: {auc_line}.",
+            "FINDINGS:",
+        ]
+        lines.extend(self._findings_lines())
+        self._facts_block = "\n".join(lines)
+        return self._facts_block
+
+    def _findings_lines(self) -> list[str]:
+        src = FINDINGS_PATH
+        if not src.exists():
+            return ["- findings.json not loaded"]
+        try:
+            payload = json.loads(src.read_text(encoding="utf-8"))
+        except Exception:
+            return ["- findings.json unreadable"]
+        out: list[str] = []
+        for chart in payload.get("charts") or []:
+            if not isinstance(chart, dict):
+                continue
+            claim = str(chart.get("claim") or "").strip()
+            if not claim:
+                continue
+            if chart.get("kind") == "bars":
+                bits = []
+                for bar in chart.get("bars") or []:
+                    if not isinstance(bar, dict):
+                        continue
+                    label = str(bar.get("label") or "").strip()
+                    try:
+                        val = float(bar.get("value") or 0) * 100.0
+                        nn = int(bar.get("n") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    bits.append(f"{label} {val:.1f}% (n={nn})")
+                extra = f": {', '.join(bits)}" if bits else ""
+                out.append(f"- {claim}{extra}")
+            else:
+                out.append(f"- {claim}")
+        ai = payload.get("ai_writing") if isinstance(payload.get("ai_writing"), dict) else {}
+        claim = str((ai or {}).get("claim") or "").strip()
+        if claim:
+            out.append(f"- {claim}")
+        return out or ["- no finding claims"]
+
+    def _prize_block(self, names: list[str]) -> str:
+        if not names:
+            return "ALLOWED 2026 PRIZES: none. Do not name any prize, track, or award."
+        return "ALLOWED 2026 PRIZES (copy exactly or do not name one):\n" + "\n".join(
+            f"- {n}" for n in names
+        )
+
+    def _event_block(self) -> str:
+        src = event_path()
+        remaining = hours_until_build_end()
+        try:
+            raw = json.loads(src.read_text(encoding="utf-8"))
+            end = str(raw.get("build_end") or "")
+            tz = str(raw.get("tz") or "")
+        except Exception:
+            end, tz = "", ""
+        return (
+            f"EVENT: Hack the North 2026. build_end {end or 'unknown'} ({tz or 'unknown'}). "
+            f"Hours remaining until build_end: {remaining:.2f}."
+        )
+
+    def _cosine_hits(
+        self, text: str, k: int = 20, vec: np.ndarray | None = None
+    ) -> list[tuple[Project, float]]:
+        n = len(self.projects)
+        if n == 0:
+            return []
+        k = max(1, min(int(k), 20, n))
+        sims = None
+        if (
+            vec is not None
+            and self.embeddings_norm is not None
+            and int(np.asarray(vec).reshape(-1).size) == int(self.embeddings_norm.shape[1])
+        ):
+            a = np.asarray(vec, dtype=float).reshape(-1)
+            a = a / (np.linalg.norm(a) + 1e-9)
+            sims = self.embeddings_norm @ a
+        elif self._openai_configured() and self.embeddings_norm is not None and (text or "").strip():
+            try:
+                raw = self._openai_embed(text, timeout=6.0)
+                a = raw / (np.linalg.norm(raw) + 1e-9)
+                sims = self.embeddings_norm @ a
+            except Exception as extra:
+                print(f"context openai skipped ({extra})")
+        if sims is None:
+            try:
+                if self.vectorizer is None or self.tfidf is None:
+                    return []
+                qv = self.vectorizer.transform([text or ""])
+                sims = cosine_similarity(qv, self.tfidf).ravel()
+            except Exception as extra:
+                print(f"context tfidf skipped ({extra})")
+                return []
+        arr = np.asarray(sims, dtype=float).ravel()
+        arr = np.where(np.isfinite(arr), arr, 0.0)
+        order = np.argsort(-arr)[:k]
+        out: list[tuple[Project, float]] = []
+        for i in order:
+            idx = int(i)
+            if idx < 0 or idx >= n:
+                continue
+            out.append((self.projects[idx], float(arr[idx])))
+        return out
+
+    def _title_list(self) -> list[str]:
+        if self._title_index is not None:
+            return self._title_index
+        names = sorted(
+            {(p.title or "").strip() for p in self.projects if (p.title or "").strip() and len((p.title or "").strip()) >= 6},
+            key=len,
+            reverse=True,
+        )
+        self._title_index = names
+        return names
+
+    def _ungrounded_projects(self, text: str, ctx: dict[str, Any]) -> list[str]:
+        blob = text or ""
+        if not blob:
+            return []
+        allowed = {(t or "").strip().lower() for t in (ctx.get("titles") or []) if t}
+        found: list[str] = []
+        low = blob.lower()
+        for title in self._title_list():
+            key = title.lower()
+            if key in allowed:
+                continue
+            if key not in low:
+                continue
+            if re.search(r"(?<![A-Za-z0-9])" + re.escape(title) + r"(?![A-Za-z0-9])", blob, re.I):
+                found.append(title)
+        return found
+
+    def _ground_validate(self, text: str, ctx: dict[str, Any], *, strip_all_pct: bool) -> tuple[str, list[str]]:
+        from prizes import coach_move_violation, load_prize_tracks
+
+        flags: list[str] = []
+        out = text or ""
+        for title in self._ungrounded_projects(out, ctx):
+            flags.append(f"project {title}")
+            out = re.sub(re.escape(title), "", out, flags=re.I)
+        if re.search(
+            r"\b(won|winner|winners|awarded|took home|first place|second place|third place)\b",
+            out,
+            re.I,
+        ):
+            flags.append("claimed a win")
+            out = re.sub(
+                r"\b(won|winner|winners|awarded|took home|first place|second place|third place)\b",
+                "finalist",
+                out,
+                flags=re.I,
+            )
+        reason = coach_move_violation(out, tracks=load_prize_tracks(), projects=self.projects)
+        if reason:
+            flags.append(reason)
+        if strip_all_pct:
+            out = _strip_percents(out)
+        else:
+            out = _strip_unverified_percents(out, ctx.get("text") or "")
+        out = re.sub(r"\s{2,}", " ", out).strip(" -–—,;.")
+        return out, flags
 
     def es_neighbours(
         self, query_embedding: np.ndarray, query_text: str, k: int = 5
@@ -835,6 +1261,7 @@ class Engine:
                 "point": point,
                 "neighbours": self.neighbour_records(pairs),
                 "probability": round(finite_unit(prob), 4),
+                "score": self.percentile_score(prob),
                 "model": model_meta,
                 "backend": used,
                 "source": source,
@@ -908,72 +1335,26 @@ class Engine:
         items = sorted(resp.data, key=lambda d: getattr(d, "index", 0))
         return [np.array(item.embedding, dtype=np.float32) for item in items]
 
-    def _gemini_coach_moves(
-        self, idea: str, prize_names: list[str] | None = None
-    ) -> list[dict[str, Any]]:
+    def _gemini_raw(self, system: str, user: str) -> str:
         key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
         if not key:
             raise RuntimeError("GEMINI_API_KEY unset")
         import httpx
 
-        from prizes import prize_prompt_names
-
-        allowed = [n for n in (prize_names or prize_prompt_names()) if n]
-        if allowed:
-            prize_block = (
-                "ALLOWED 2026 SPONSOR TRACKS. You may name a prize only by copying "
-                "one of these strings exactly. Inventing any other prize, track, "
-                "challenge, or award is forbidden:\n"
-                + "\n".join(f"- {n}" for n in allowed)
-            )
-        else:
-            prize_block = (
-                "There is no allowed prize list. Do not name any prize, track, "
-                "challenge, award, or sponsor contest."
-            )
-        system = (
-            "You coach Hack the North teams. Return STRICT JSON only: "
-            '{"moves":[{"label":str,"rationale":str,"reframed_description":str,'
-            '"effort_hours":number,'
-            '"features":{"hardware":bool,"has_video":bool,"extra_tech_tags":int}}]}. '
-            "Give three or four distinct moves. rationale is one sentence. "
-            "reframed_description is the whole idea rewritten as if that move already shipped. "
-            "You only phrase. You do not invent facts or numbers. "
-            "effort_hours is your estimate of how many hours that change takes for a "
-            "four-person hackathon team. Estimate effort ONLY. Do not decide feasibility, "
-            "do not mention remaining time, and do not say too late or enough time. "
-            "SYSTEM RULE: NEVER output a probability or percentage. Numbers are forbidden "
-            "in label, rationale, and reframed_description. extra_tech_tags and "
-            "effort_hours live in the JSON fields only, never in prose. "
-            "Do not mention scores, odds, percent, or how likely anything is. "
-            "PRIZE RULE: a move does not need a prize. If you mention one, it MUST be "
-            "copied verbatim from the allowed list. Never invent prize names. "
-            "HISTORY RULE: never say a project won, was awarded, or took a sponsor prize. "
-            "Our data only has finalist status. You may say a neighbour was a finalist "
-            "and nothing stronger. Do not name which prize anyone received."
-        )
-        user = (
-            "Idea:\n"
-            f"{idea[:2000]}\n\n"
-            f"{prize_block}\n\n"
-            "Propose moves such as: ship a physical build, film a live demo, name a real stack, "
-            "or tighten the story toward a judging-day demo. JSON only."
-        )
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": user}]}],
             "generationConfig": {
-                "temperature": 0.4,
+                "temperature": 0.2,
                 "responseMimeType": "application/json",
             },
         }
-        # 1.5-flash is retired; this key is a new-user key so 2.5-flash 404s too.
         last_err: Exception | None = None
         base = (
             os.getenv("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta"
         ).rstrip("/")
         deadline = time.monotonic() + 8.0
-        with httpx.Client(timeout=8.0) as client:
+        with httpx.Client(timeout=8.0, transport=httpx.HTTPTransport(retries=0)) as client:
             for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
                 remaining = deadline - time.monotonic()
                 if remaining < 0.4:
@@ -1000,12 +1381,33 @@ class Engine:
                 if not raw:
                     last_err = RuntimeError(f"{model} empty")
                     continue
-                try:
-                    return _parse_coach_moves(raw)
-                except Exception as exc:
-                    last_err = RuntimeError(f"{model} unusable payload: {exc}")
-                    continue
+                return raw
         raise last_err or RuntimeError("Gemini returned empty")
+
+    def _gemini_coach_moves(self, idea: str, ctx: dict[str, Any]) -> list[dict[str, Any]]:
+        system = (
+            GROUND_RULES
+            + " You coach Hack the North teams. Return STRICT JSON only: "
+            '{"moves":[{"label":str,"rationale":str,"reframed_description":str,'
+            '"effort_hours":number,'
+            '"features":{"hardware":bool,"has_video":bool,"extra_tech_tags":int}}]}. '
+            "Give three or four distinct moves. rationale is one sentence. "
+            "reframed_description is the whole idea rewritten as if that move already shipped. "
+            "You only phrase. effort_hours is hours for a four-person team. "
+            "Do not decide feasibility. Numbers are forbidden in label, rationale, and "
+            "reframed_description. extra_tech_tags and effort_hours live in JSON fields only. "
+            "If you mention a past project, copy its title and year from CONTEXT. "
+            "A move does not need a prize. If you mention one, copy it verbatim from CONTEXT."
+        )
+        user = (
+            "CONTEXT:\n"
+            f"{(ctx.get('text') or '')[:12000]}\n\n"
+            "Idea:\n"
+            f"{idea[:2000]}\n\n"
+            "Propose moves such as: ship a physical build, film a live demo, name a real stack, "
+            "or tighten the story toward a judging-day demo. JSON only."
+        )
+        return _parse_coach_moves(self._gemini_raw(system, user))
 
     def coach(self, idea: str, time_budget_hours: float | None = None) -> dict[str, Any]:
         """Propose 3–4 moves. Probabilities come from the classifier, never Gemini.
@@ -1026,24 +1428,51 @@ class Engine:
             embed_vec = self.vectorizer.transform([document]).toarray()[0]
         baseline_clf, _ = self._probability(embed_vec, signals)
         baseline = self._score_like_ask(embed_vec, signals)
+        baseline_score = self.percentile_score(baseline)
         out: dict[str, Any] = {
             "baseline": round(finite_unit(baseline), 4),
+            "baseline_score": baseline_score,
             "moves": [],
             "hours_remaining": float(remaining),
             "time_budget_hours": float(budget),
         }
-        from prizes import filter_coach_moves, load_prize_tracks, prize_prompt_names
+        from prizes import filter_coach_moves, load_prize_tracks
 
         tracks = load_prize_tracks()
+        ctx = self.build_context(document, vec=embed_vec)
         try:
-            specs = self._gemini_coach_moves(document, prize_names=prize_prompt_names(tracks))
+            specs = self._gemini_coach_moves(document, ctx)
         except Exception as exc:
             print(f"coach gemini skipped ({exc})")
             if _gemini_unavailable(exc):
                 specs = _fallback_coach_specs(document)
             else:
                 return json_safe(out)
-        specs = filter_coach_moves(specs, tracks=tracks, projects=self.projects)[:4]
+        kept = []
+        for spec in specs:
+            spec = _enrich_coach_features(spec)
+            drop = False
+            for key in ("label", "rationale", "reframed_description"):
+                val, flags = self._ground_validate(str(spec.get(key) or ""), ctx, strip_all_pct=True)
+                spec[key] = val
+                if any("unnamed prize" in f for f in flags):
+                    drop = True
+            if drop:
+                print(f"coach dropped ungrounded prize: {spec.get('label')}")
+                continue
+            if spec.get("label") and spec.get("reframed_description"):
+                kept.append(spec)
+        specs = filter_coach_moves(kept, tracks=tracks, projects=self.projects)[:4]
+        if len(specs) < 2:
+            have = {s.get("label") for s in specs}
+            for extra_spec in _fallback_coach_specs(document):
+                if extra_spec["label"] in have:
+                    continue
+                specs.append(extra_spec)
+                have.add(extra_spec["label"])
+                if len(specs) >= 3:
+                    break
+        specs = specs[:4]
         if not specs:
             return json_safe(out)
         texts = [s["reframed_description"] for s in specs]
@@ -1059,22 +1488,24 @@ class Engine:
             has_video = bool(feats.get("has_video"))
             extra = int(feats.get("extra_tech_tags") or 0)
             reframed = spec["reframed_description"]
-            struct = features_from_text(
-                reframed,
-                team_size=4,
-                has_video=has_video,
-                has_repo=True,
-                hardware=hardware,
-                extra_tech_tags=extra,
-            )
-            move_signals = parse_signals(reframed)
-            move_signals["hardware"] = hardware or bool(move_signals.get("hardware"))
-            move_signals["n_tech"] = float(move_signals.get("n_tech") or 0) + extra
-            if hardware:
+            move_signals = dict(signals)
+            hinted = parse_signals(reframed)
+            move_signals["hardware"] = hardware or bool(signals.get("hardware")) or bool(hinted.get("hardware"))
+            move_signals["has_video"] = has_video or bool(signals.get("has_video")) or bool(hinted.get("has_video"))
+            move_signals["n_tech"] = float(signals.get("n_tech") or 0) + extra
+            if move_signals["hardware"] and not signals.get("hardware"):
                 move_signals["n_tech"] = float(move_signals["n_tech"]) + 1
+            move_signals["length"] = signals.get("length")
+            move_signals["has_repo"] = signals.get("has_repo")
+            move_signals["team_size"] = signals.get("team_size") or 4
+            struct = query_features(move_signals)
+            # Score the same idea with the move's features. Re-embedding a paraphrase
+            # was collapsing every rec to ~1 percentile (or randomly tanking it).
+            score_vec = embed_vec if embed_vec is not None else vec
             new_prob = self._score_like_ask(
-                vec, move_signals, struct=struct, baseline_clf=baseline_clf
+                score_vec, move_signals, struct=struct, baseline_clf=baseline_clf
             )
+            new_score = self.percentile_score(new_prob)
             xy = self._openai_point(vec)
             if xy is None and self.fallback_pca is not None:
                 try:
@@ -1087,6 +1518,8 @@ class Engine:
             if delta != delta or abs(delta) == float("inf"):
                 delta = 0.0
             delta = max(-1.0, min(1.0, delta))
+            score_delta = int(new_score) - int(baseline_score)
+            score_delta = max(-100, min(100, score_delta))
             effort = float(spec.get("effort_hours") or 4.0)
             if effort != effort or effort < 0:
                 effort = 4.0
@@ -1096,14 +1529,160 @@ class Engine:
                     "rationale": spec["rationale"],
                     "new_prob": round(finite_unit(new_prob), 4),
                     "delta": round(delta, 4),
+                    "new_score": new_score,
+                    "score_delta": score_delta,
                     "new_point": {"x": float(xy[0]), "y": float(xy[1])},
                     "effort_hours": round(float(effort), 2),
                     "feasible": bool(effort <= budget),
                 }
             )
-        moves.sort(key=lambda m: -m["delta"])
+        moves.sort(key=lambda m: -m["score_delta"])
         out["moves"] = moves
         return json_safe(out)
+
+    def chat(self, messages: list[dict[str, Any]], idea: str = "") -> dict[str, Any]:
+        """Phrasing-only chat. Numbers come from /api/ask after Preview."""
+        from prizes import coach_move_violation, load_prize_tracks
+
+        cleaned: list[dict[str, str]] = []
+        for row in messages or []:
+            if not isinstance(row, dict):
+                continue
+            role = str(row.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = str(row.get("content") or "").strip()
+            if not content:
+                continue
+            cleaned.append({"role": role, "content": content[:2000]})
+        cleaned = cleaned[-8:]
+        idea = (idea or "").strip()[:2000]
+        empty = {"reply": "Chat is quiet. Place it still works.", "framings": []}
+        if not cleaned:
+            return json_safe(empty)
+        seed = "\n".join(x for x in (idea, cleaned[-1]["content"]) if x).strip()
+        ctx = self.build_context(seed)
+        try:
+            parsed = self._gemini_chat(cleaned, idea, ctx)
+        except Exception as extra:
+            print(f"chat gemini skipped ({extra})")
+            return json_safe(empty)
+        reply, flags = self._ground_validate(
+            str(parsed.get("reply") or "").strip(), ctx, strip_all_pct=True
+        )
+        if flags:
+            print(f"chat reply stripped ({flags})")
+        reply = reply[:2000]
+        tracks = load_prize_tracks()
+        framings = []
+        for i, row in enumerate(parsed.get("framings") or []):
+            if not isinstance(row, dict):
+                continue
+            label, fl = self._ground_validate(str(row.get("label") or "").strip()[:80], ctx, strip_all_pct=True)
+            text, ft = self._ground_validate(str(row.get("text") or "").strip()[:2000], ctx, strip_all_pct=True)
+            rationale, fr = self._ground_validate(str(row.get("rationale") or "").strip()[:240], ctx, strip_all_pct=True)
+            if fl or ft or fr:
+                print(f"chat dropped framing ({fl or ft or fr}): {label}")
+                continue
+            if not label or not text:
+                continue
+            blob = f"{label} {rationale} {text}"
+            reason = coach_move_violation(blob, tracks=tracks, projects=self.projects)
+            if reason:
+                print(f"chat dropped framing ({reason}): {label}")
+                continue
+            framings.append(
+                {
+                    "id": f"f{i}",
+                    "label": label,
+                    "text": text,
+                    "rationale": rationale,
+                }
+            )
+            if len(framings) >= 3:
+                break
+        if not reply:
+            reply = "Here is a tighter framing. Preview it on the map if you want the classifier number."
+        return json_safe({"reply": reply, "framings": framings})
+
+    def answer_question(self, question: str) -> dict[str, Any]:
+        """Grounded Q&A. If Gemini fails, a short couldn't-answer — never 500."""
+        quiet = {
+            "reply": "Couldn't answer from the data.",
+            "framings": [],
+            "citations": [],
+        }
+        q = (question or "").strip()
+        if not q:
+            return json_safe(quiet)
+        ctx = self.build_context(q)
+        try:
+            parsed = self._gemini_answer(q, ctx)
+        except Exception as extra:
+            print(f"answer gemini skipped ({extra})")
+            return json_safe(quiet)
+        reply, flags = self._ground_validate(
+            str(parsed.get("reply") or "").strip(), ctx, strip_all_pct=False
+        )
+        if flags:
+            print(f"answer stripped ({flags})")
+            if any(f.startswith("project ") for f in flags):
+                reply = "That's not in the data."
+        if not reply:
+            reply = quiet["reply"]
+        allowed = {(t or "").strip().lower() for t in (ctx.get("titles") or [])}
+        citations = []
+        for row in parsed.get("citations") or []:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title") or "").strip()
+            if not title or title.lower() not in allowed:
+                continue
+            try:
+                year = int(row.get("year") or 0)
+            except (TypeError, ValueError):
+                year = 0
+            citations.append({"title": title[:120], "year": year})
+            if len(citations) >= 8:
+                break
+        return json_safe({"reply": reply[:2000], "framings": [], "citations": citations})
+
+    def _gemini_chat(
+        self, messages: list[dict[str, str]], idea: str, ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        system = (
+            GROUND_RULES
+            + " You help Hack the North teams reframe an idea. Return STRICT JSON only: "
+            '{"reply":str,"framings":[{"label":str,"text":str,"rationale":str}]}. '
+            "reply is one or two sentences. Give zero to two framings. "
+            "text is the whole idea rewritten. You only phrase. "
+            "Numbers are forbidden in reply, label, text, and rationale. "
+            "You may say finalist. If you mention a past project, copy title and year from CONTEXT."
+        )
+        history = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+        user = (
+            "CONTEXT:\n"
+            f"{(ctx.get('text') or '')[:12000]}\n\n"
+            f"Current idea:\n{(idea or '(none placed yet)')[:2000]}\n\n"
+            f"Conversation:\n{history}\n\nJSON only."
+        )
+        return _parse_chat(self._gemini_raw(system, user))
+
+    def _gemini_answer(self, question: str, ctx: dict[str, Any]) -> dict[str, Any]:
+        system = (
+            GROUND_RULES
+            + " Answer the question from CONTEXT only. Return STRICT JSON only: "
+            '{"reply":str,"citations":[{"title":str,"year":int}]}. '
+            "reply is a few sentences. citations are projects you named, copied from CONTEXT. "
+            "If the answer isn't in CONTEXT, reply is exactly: That's not in the data. "
+            "and citations is []."
+        )
+        user = (
+            "CONTEXT:\n"
+            f"{(ctx.get('text') or '')[:12000]}\n\n"
+            f"Question:\n{question[:2000]}\n\nJSON only."
+        )
+        return _parse_answer(self._gemini_raw(system, user))
 
 
 def _gemini_unavailable(exc: Exception) -> bool:
@@ -1120,6 +1699,33 @@ def _gemini_unavailable(exc: Exception) -> bool:
         "404",
     )
     return any(n in msg for n in needles)
+
+
+def _enrich_coach_features(spec: dict[str, Any]) -> dict[str, Any]:
+    """Fill hardware/video flags from the move text when Gemini omits them."""
+    feats = spec.get("features") if isinstance(spec.get("features"), dict) else {}
+    blob = " ".join(
+        str(spec.get(k) or "") for k in ("label", "rationale", "reframed_description")
+    ).lower()
+    hardware = bool(feats.get("hardware")) or any(
+        w in blob for w in ("physical", "hardware", "sensor", "wearable", "prototype you can")
+    )
+    has_video = bool(feats.get("has_video")) or any(
+        w in blob
+        for w in ("video", "film", "youtube", "live demo", "demonstration", "screen recording")
+    )
+    try:
+        extra = int(feats.get("extra_tech_tags") or 0)
+    except (TypeError, ValueError):
+        extra = 0
+    if any(w in blob for w in ("stack", "sdk", "named a", "name a real")):
+        extra = max(extra, 2)
+    spec["features"] = {
+        "hardware": hardware,
+        "has_video": has_video,
+        "extra_tech_tags": max(0, min(8, extra)),
+    }
+    return spec
 
 
 def _fallback_coach_specs(idea: str) -> list[dict[str, Any]]:
@@ -1178,8 +1784,8 @@ def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
         reframed = str(row.get("reframed_description") or "").strip()
         if not label or not reframed:
             continue
-        label = re.sub(r"\b\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\b", "", label)
-        rationale = re.sub(r"\b\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\b", "", rationale)
+        label = re.sub(r"\b\d+(?:\.\d+)?%", "", label)
+        rationale = re.sub(r"\b\d+(?:\.\d+)?%", "", rationale)
         label = re.sub(r"\s{2,}", " ", label).strip(" -–—")[:80]
         rationale = re.sub(r"\s{2,}", " ", rationale).strip()[:240]
         feats = row.get("features") if isinstance(row.get("features"), dict) else {}
@@ -1202,6 +1808,47 @@ def _parse_coach_moves(raw: str) -> list[dict[str, Any]]:
             }
         )
     return moves[:8]
+
+
+def _parse_chat(raw: str) -> dict[str, Any]:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        return {"reply": "", "framings": []}
+    rows = data.get("framings") or data.get("ideas") or []
+    if not isinstance(rows, list):
+        rows = []
+    return {"reply": str(data.get("reply") or ""), "framings": rows}
+
+
+def _parse_answer(raw: str) -> dict[str, Any]:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        return {"reply": "", "citations": []}
+    rows = data.get("citations") or []
+    if not isinstance(rows, list):
+        rows = []
+    return {"reply": str(data.get("reply") or ""), "citations": rows}
+
+
+def _strip_percents(s: str) -> str:
+    text = re.sub(r"\b\d+(?:\.\d+)?%", "", s or "")
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _strip_unverified_percents(text: str, context: str) -> str:
+    allowed = set(re.findall(r"\b\d+(?:\.\d+)?%", context or ""))
+    def keep(match: re.Match[str]) -> str:
+        return match.group(0) if match.group(0) in allowed else ""
+    out = re.sub(r"\b\d+(?:\.\d+)?%", keep, text or "")
+    return re.sub(r"\s{2,}", " ", out).strip()
 
 
 def hours_until_build_end(

@@ -3,16 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Prior Art</title>
+  <title>Win the North</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/web/style.css?v=28" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/web/style.css?v=45" />
 </head>
 <body>
+  <div class="campsite" aria-hidden="true">
+    <svg class="campsite-svg campsite-sky" viewBox="0 0 1440 240" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax slice">
+      <defs>
+        <linearGradient id="htnSky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#B8E8F2" />
+          <stop offset="72%" stop-color="#D5EFE4" />
+          <stop offset="100%" stop-color="#E8D4B8" />
+        </linearGradient>
+      </defs>
+      <rect width="1440" height="240" fill="url(#htnSky)" />
+    </svg>
+    <div class="sky-clouds">
+      <img class="cloud cloud-1" src="/web/cloud-c.png" alt="" />
+      <img class="cloud cloud-2" src="/web/cloud-a.png" alt="" />
+      <img class="cloud cloud-3" src="/web/cloud-b.png" alt="" />
+      <img class="cloud cloud-4" src="/web/cloud-c.png" alt="" />
+      <img class="cloud cloud-5" src="/web/cloud-a.png" alt="" />
+      <img class="cloud cloud-6" src="/web/cloud-b.png" alt="" />
+      <img class="cloud cloud-7" src="/web/cloud-c.png" alt="" />
+    </div>
+    <svg class="campsite-svg campsite-peaks" viewBox="0 0 1440 240" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax slice">
+      <path fill="#3D9B96" d="M0 148 L90 92 L170 138 L255 68 L350 128 L430 82 L525 142 L610 94 L705 148 L790 78 L885 136 L980 72 L1095 142 L1200 86 L1315 138 L1440 70 L1440 178 L0 178 Z" />
+      <path fill="#2F7A76" d="M0 172 L28 132 L56 172 L84 124 L112 172 L148 118 L184 172 L220 128 L256 172 L300 110 L344 172 L388 122 L432 172 L480 108 L528 172 L572 126 L616 172 L668 112 L720 172 L764 120 L808 172 L860 108 L912 172 L956 125 L1000 172 L1052 112 L1104 172 L1148 118 L1192 172 L1244 110 L1296 172 L1340 124 L1384 172 L1416 116 L1440 172 L1440 240 L0 240 Z" />
+      <path fill="#C4A07A" d="M0 208 C200 188 400 222 600 202 C800 182 1000 218 1200 200 C1320 190 1388 208 1440 198 L1440 240 L0 240 Z" />
+    </svg>
+  </div>
   <header class="top">
     <div class="brand">
-      <div class="brand-name">Prior Art</div>
+      <div class="brand-name">Win the North</div>
       <div class="brand-sub" id="corpus-meta">Hack the North, 2014–2025</div>
     </div>
     <nav class="tabs" role="tablist">
@@ -20,22 +46,24 @@
       <button class="tab" data-view="findings" type="button">Findings</button>
     </nav>
   </header>
+  <img class="plank" src="/web/bg-table.png" alt="" aria-hidden="true" />
 
   <main id="view-explore" class="view explore">
     <aside class="rail">
-      <div class="rail-scroll">
-        <form id="ask-form" class="ask">
-          <label for="ask-input">Describe your project.</label>
-          <textarea id="ask-input" name="text" rows="3" maxlength="4000" placeholder="A cane that maps icy sidewalks and speaks them before you reach them."></textarea>
-          <label class="ask-sub" for="ask-github">GitHub repo, optional.</label>
-          <input id="ask-github" name="github" type="text" maxlength="400" placeholder="https://github.com/you/your-hack" autocomplete="off" />
-          <label class="ask-sub" for="ask-devpost">This year's Devpost, optional.</label>
+      <form id="ask-form" class="ask">
+        <label for="ask-input">Describe your project.</label>
+        <textarea id="ask-input" name="text" rows="2" maxlength="4000" placeholder="A cane that maps icy sidewalks…"></textarea>
+        <div class="ask-extras">
+          <label class="ask-sub" for="ask-github">GitHub, optional</label>
+          <input id="ask-github" name="github" type="text" maxlength="400" placeholder="github.com/you/hack" autocomplete="off" />
+          <label class="ask-sub" for="ask-devpost">Devpost, optional</label>
           <input id="ask-devpost" name="devpost" type="text" maxlength="400" placeholder="hackthenorth2026.devpost.com" autocomplete="off" />
-          <p class="ask-hint">One sentence is enough. A public repo lets us read the README. A Devpost URL scores each sponsor track and says whether to strengthen it or add it.</p>
-          <button type="submit" id="ask-btn">Place it</button>
-          <p class="ask-status" id="ask-status" hidden></p>
-        </form>
+        </div>
+        <button type="submit" id="ask-btn">Place it</button>
+        <p class="ask-status" id="ask-status" hidden></p>
+      </form>
 
+      <div class="rail-scroll" id="rail-scroll">
         <section class="twins" id="twins" hidden>
           <article class="twin twin-win" id="twin-win"></article>
           <article class="twin twin-lose" id="twin-lose"></article>
@@ -62,6 +90,9 @@
         </section>
       </div>
 
+      <div class="rail-split rail-split-y" id="split-rail-y" role="separator" aria-orientation="horizontal" aria-label="Resize suggestions"></div>
+
+      <div class="rail-south" id="rail-south">
       <section class="coach" id="coach-panel" hidden>
         <h2>Coach</h2>
         <label class="coach-time-toggle" for="coach-time-on">
@@ -70,8 +101,10 @@
         </label>
         <div class="coach-time" id="coach-time" hidden>
           <p class="coach-hours" id="coach-hours"></p>
-          <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
-          <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
+          <div class="coach-budget-row">
+            <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
+            <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
+          </div>
         </div>
         <p class="empty" id="coach-status" hidden></p>
         <ol id="coach-list"></ol>
@@ -79,19 +112,31 @@
 
       <section class="prob" id="prob-panel" hidden>
         <div class="prob-num" id="prob-num">—</div>
-        <div class="prob-label">finalist probability</div>
+        <div class="prob-label">Finalist Score</div>
+        <p class="prob-base" id="prob-base"></p>
         <div class="prob-caveat" id="prob-caveat"></div>
+        <ul class="prob-why" id="prob-why"></ul>
         <div class="prob-meta" id="prob-meta"></div>
         <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
       </section>
+      </div>
     </aside>
-
+    <div class="rail-split rail-split-x" id="split-rail-x" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
     <section class="stage">
       <canvas id="map"></canvas>
       <div class="year-hud" id="year-hud">
         <div class="year-hud-num" id="year-hud-num">2014–2025</div>
         <div class="year-hud-sub" id="year-hud-sub"></div>
       </div>
+      <form class="theme-search" id="theme-search" autocomplete="off">
+        <label for="theme-input">Highlight the map by theme</label>
+        <div class="theme-search-row">
+          <input id="theme-input" type="search" maxlength="400" placeholder="wearables, LLMs, accessibility…" />
+          <button type="submit" id="theme-btn">Highlight</button>
+        </div>
+        <p class="theme-search-note" id="theme-note" hidden></p>
+        <ul class="theme-legend" id="theme-legend" hidden></ul>
+      </form>
       <div class="zoom" id="zoom">
         <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
         <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
@@ -102,6 +147,7 @@
         <span><i class="swatch mute"></i> didn’t final</span>
         <span><i class="swatch accent"></i> finalist</span>
         <span><i class="swatch you"></i> your idea</span>
+        <span><i class="swatch preview"></i> preview</span>
       </div>
       <div class="scrubber" id="scrubber">
         <button type="button" id="scrub-play" class="scrub-play" aria-label="Play years">Play</button>
@@ -121,6 +167,32 @@
     <div id="charts" class="charts"></div>
   </main>
 
-  <script src="/web/app.js?v=27"></script>
+  <button type="button" class="chat-fab" id="chat-fab" aria-label="Open chat" aria-expanded="false" aria-controls="chat-panel">
+    <svg class="chat-fab-bubble" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M4.5 3.75h15a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1 -2.25 2.25H9.62l-3.87 3.1a.75.75 0 0 1-1.25-.56v-2.54H4.5A2.25 2.25 0 0 1 2.25 15V6A2.25 2.25 0 0 1 4.5 3.75Z"/>
+    </svg>
+    <img class="chat-fab-goose" src="/web/goose.png" alt="" aria-hidden="true" />
+  </button>
+
+  <section class="chat-dock" id="chat-panel" hidden>
+    <header class="chat-dock-head">
+      <div>
+        <h2>Chat</h2>
+        <p class="chat-dock-sub">Reframe the idea. Preview quotes the classifier.</p>
+      </div>
+      <button type="button" class="chat-dock-close" id="chat-close" aria-label="Close chat">×</button>
+    </header>
+    <p class="empty" id="chat-hint">Place an idea, then ask for a tighter framing. Chat does not invent a percent.</p>
+    <ol id="chat-list"></ol>
+    <section class="compare" id="compare" hidden></section>
+    <button type="button" id="compare-clear" class="preview-btn" hidden>Clear preview</button>
+    <form id="chat-form" class="chat-form">
+      <textarea id="chat-input" rows="1" maxlength="2000" placeholder="Make this more hardware-shaped…" aria-label="Message"></textarea>
+      <button type="submit" id="chat-btn" aria-label="Send">Send</button>
+      <p class="ask-status" id="chat-status" hidden></p>
+    </form>
+  </section>
+
+  <script src="/web/app.js?v=35"></script>
 </body>
 </html>
