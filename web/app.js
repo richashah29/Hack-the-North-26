@@ -1385,7 +1385,17 @@
       if (score == null) {
         probBase.textContent = "Finalist Score is a percentile of the calibrated classifier, not a chance of winning.";
       } else {
-        probBase.textContent = `Resembles past finalists more than ${score}% of all HTN projects (2014-2025).`;
+        const scope = (data && data.score_scope) || {};
+        const names = (scope.events || data.events || selectedEventList()).filter(Boolean);
+        const short = names.map(eventChipLabel).join(", ");
+        const nRef = Number(scope.n);
+        const nBit = Number.isFinite(nRef) && nRef > 0 ? `${fmtN(nRef)} ` : "";
+        if (scope.htn_only || (names.length === 1 && names[0] === "Hack the North")) {
+          probBase.textContent = `Resembles past finalists more than ${score}% of ${nBit}Hack the North projects (2014-2025).`;
+        } else {
+          const noun = names.length === 1 ? `${short} projects` : `selected projects (${short})`;
+          probBase.textContent = `Resembles past labelled winners more than ${score}% of ${nBit}${noun}.`;
+        }
       }
     }
     if (probCaveat) {
@@ -1393,7 +1403,11 @@
       if (Number.isFinite(p)) {
         cal = `${(Math.max(0, Math.min(1, p)) * 100).toFixed(1)}%`;
       }
-      probCaveat.textContent = `Calibrated finalist probability: ${cal} · AUC ${auc} · leave-one-year-out`;
+      const scope = (data && data.score_scope) || {};
+      const htnOnly = scope.htn_only || false;
+      probCaveat.textContent = htnOnly
+        ? `Calibrated finalist probability: ${cal} · AUC ${auc} · leave-one-year-out`
+        : `Calibrated winner probability on the selected hackathons: ${cal}`;
     }
     const bits = [];
     const g = data.github;
