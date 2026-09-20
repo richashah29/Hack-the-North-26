@@ -37,6 +37,17 @@ and that's the interesting part.
   claiming jokes win, but the usual "make it useful" advice doesn't show up
   anywhere in the data.
 
+## Beyond Hack the North
+
+HTN on its own is the default. We also scraped **UofTHacks** (8 editions) and **GenAI
+Genesis** (3), so you can ask the same question against a wider Toronto field — 4,680
+projects instead of 3,443. Point `CORPUS_PATH` at `data/corpus_multi.parquet` to use it.
+
+Worth knowing the two pools measure slightly different things. HTN publishes a museum of
+its finalists, so there we know the real top ~12 each year. Nobody else does, so
+elsewhere the only signal is the Devpost prize badge, which includes sponsor tracks. The
+`won_prize` column means the same thing everywhere if you want to compare fairly.
+
 The full dataset and how we built it is in [DATASET.md](DATASET.md).
 
 ## Run

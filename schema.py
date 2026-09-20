@@ -22,7 +22,9 @@ ROOT = Path(__file__).resolve().parent
 COLUMNS = {
     # --- identity -------------------------------------------------------
     "slug":         ("string", "Devpost slug. PRIMARY KEY. devpost.com/software/<slug>"),
-    "year":         ("int16",  "HTN edition the project was submitted to (2014-2026)"),
+    "year":         ("int16",  "Calendar year of the edition (2014-2026)"),
+    "event":        ("string", "Hackathon family: 'Hack the North' | 'UofTHacks' | 'GenAI Genesis'"),
+    "event_id":     ("string", "Unique edition id, e.g. 'htn-2019', 'uofthacks-vi'"),
     "url":          ("string", "Canonical Devpost project URL"),
     "museum_url":   ("string", "museum.hackthenorth.com/<slug> if a finalist, else ''"),
 
@@ -47,8 +49,11 @@ COLUMNS = {
     "has_repo":     ("bool",   "A github.com link appears anywhere on the page"),
 
     # --- outcome (the labels) -------------------------------------------
-    "finalist":     ("bool",   "Top-~12 finalist for its year. THE LABEL."),
-    "prizes":       ("object", "list[str] of HTN prize strings won, verbatim"),
+    "finalist":     ("bool",   "THE LABEL. For HTN: museum-verified top ~12 (4.7%). "
+                               "For other events: won any prize. NOT comparable across events."),
+    "won_prize":    ("bool",   "Won any Devpost prize. Computed identically everywhere, so "
+                               "THIS is the label to use when pooling events (HTN 11.2%)."),
+    "prizes":       ("object", "list[str] of prize strings won at this event, verbatim"),
     "n_prizes":     ("int16",  "len(prizes)"),
     "label_source": ("string", "'museum+devpost' | 'museum' | 'devpost' | 'none'"),
 }
@@ -60,6 +65,9 @@ LABELLED_YEARS = range(2014, 2026)
 
 SAMPLE_PATH = "data/sample.json"
 CORPUS_PATH = "data/corpus.parquet"
+# The wider pool: HTN + UofTHacks + GenAI Genesis. Select it with CORPUS_PATH in
+# .env; the default stays Hack the North alone so the demo can't change under us.
+MULTI_CORPUS_PATH = "data/corpus_multi.parquet"
 DEFAULT_PARQUET = ROOT / CORPUS_PATH
 _APP_SAMPLE = ROOT / "sample.json"
 
@@ -89,8 +97,14 @@ SECTION_KEYS = (
 )
 
 
-def validate(df):
-    """Raise if the corpus violates the contract. Called before every ship."""
+def validate(df, scope: str = "htn"):
+    """Raise if the corpus violates the contract. Called before every ship.
+
+    scope="htn"   the Hack the North corpus: ~12 museum finalists per year.
+    scope="multi" the pooled corpus: HTN's per-year rule cannot apply, because
+                  other events label on "won any prize" at a much higher rate,
+                  so each event is checked for a plausible non-zero rate instead.
+    """
     problems = []
 
     missing = [c for c in COLUMNS if c not in df.columns]
@@ -105,17 +119,31 @@ def validate(df):
         problems.append(f"duplicate slugs: {dupes}")
     if df.slug.eq("").any():
         problems.append("empty slugs present")
+    if df.event_id.eq("").any():
+        problems.append(f"{int(df.event_id.eq('').sum())} rows with no event_id")
     if not df.year.between(2014, 2026).all():
         problems.append(f"years out of range: {sorted(set(df.year) - set(range(2014, 2027)))}")
     if df.team_size.lt(1).any():
         problems.append("team_size < 1")
 
-    for y in LABELLED_YEARS:
-        n = int(df[df.year == y].finalist.sum())
-        if n == 0:
-            problems.append(f"{y}: ZERO finalists - the join failed for that year")
-        elif not 5 <= n <= 25:
-            problems.append(f"{y}: {n} finalists, expected ~12")
+    if scope == "htn":
+        if set(df.event.unique()) - {"Hack the North"}:
+            problems.append(f"non-HTN events in the HTN corpus: {set(df.event.unique())}")
+        for y in LABELLED_YEARS:
+            n = int(df[df.year == y].finalist.sum())
+            if n == 0:
+                problems.append(f"{y}: ZERO finalists - the join failed for that year")
+            elif not 5 <= n <= 25:
+                problems.append(f"{y}: {n} finalists, expected ~12")
+    else:
+        # A zero-winner event means the prize markup did not match: that event is
+        # broken and would silently poison the pooled map. Catch it here.
+        for eid, sub in df.groupby("event_id"):
+            won = int(sub.won_prize.sum())
+            if won == 0:
+                problems.append(f"{eid}: ZERO winners - prize selector did not match")
+            elif won / len(sub) > 0.6:
+                problems.append(f"{eid}: {won}/{len(sub)} winners, implausibly high")
 
     if problems:
         raise AssertionError("corpus contract violated:\n  - " + "\n  - ".join(problems))

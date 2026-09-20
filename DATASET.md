@@ -78,7 +78,9 @@ Here's every column:
 | column | type | meaning |
 |---|---|---|
 | `slug` | string | Devpost slug. PRIMARY KEY. devpost.com/software/<slug> |
-| `year` | int16 | HTN edition the project was submitted to (2014-2026) |
+| `year` | int16 | Calendar year of the edition (2014-2026) |
+| `event` | string | Hackathon family: 'Hack the North' | 'UofTHacks' | 'GenAI Genesis' |
+| `event_id` | string | Unique edition id, e.g. 'htn-2019', 'uofthacks-vi' |
 | `url` | string | Canonical Devpost project URL |
 | `museum_url` | string | museum.hackthenorth.com/<slug> if a finalist, else '' |
 | `title` | string | Project name |
@@ -97,8 +99,9 @@ Here's every column:
 | `desc_words` | int32 | Whitespace word count of description |
 | `has_video` | bool | Embedded YouTube/Vimeo iframe present |
 | `has_repo` | bool | A github.com link appears anywhere on the page |
-| `finalist` | bool | Top-~12 finalist for its year. THE LABEL. |
-| `prizes` | object | list[str] of HTN prize strings won, verbatim |
+| `finalist` | bool | THE LABEL. For HTN: museum-verified top ~12 (4.7%). For other events: won any prize. NOT comparable across events. |
+| `won_prize` | bool | Won any Devpost prize. Computed identically everywhere, so THIS is the label to use when pooling events (HTN 11.2%). |
+| `prizes` | object | list[str] of prize strings won at this event, verbatim |
 | `n_prizes` | int16 | len(prizes) |
 | `label_source` | string | 'museum+devpost' | 'museum' | 'devpost' | 'none' |
 
@@ -113,3 +116,26 @@ Here's every column:
 - 2014's labels rest on the museum alone, for the unnamed-prize-track reason above.
 - `description` is the writeup only. We strip the tag list and the link nav out of
   it, so two projects don't look similar just because they both used React.
+
+## The wider pool
+
+Hack the North on its own is the default. There's a second corpus,
+`data/corpus_multi.parquet`, that adds two more Toronto-area hackathons so you can
+ask the same question against a broader field. Point `CORPUS_PATH` at it to use it.
+
+| event          |   editions |   projects |   winners |   win_% |
+|:---------------|-----------:|-----------:|----------:|--------:|
+| GenAI Genesis  |          3 |        476 |        51 |    10.7 |
+| Hack the North |         12 |       3443 |       386 |    11.2 |
+| UofTHacks      |          8 |        761 |       124 |    16.3 |
+
+One thing to be careful about. Hack the North publishes a museum of its finalists, so
+for HTN we know the actual top ~12 each year - about 5% of the field. No other event
+publishes anything like that, so the only thing we can read off their pages is the
+Devpost prize badge, which includes every sponsor track. Those are not the same bar.
+
+That's why there are two outcome columns. `finalist` keeps the strict meaning for HTN
+and means "won something" everywhere else, so it is **not** comparable between events.
+`won_prize` means "won any prize" for every event including HTN, so that's the one to
+use if you're pooling them. On that measure HTN sits at 11.2%, which is in the
+same range as the rest, and the comparison is fair.

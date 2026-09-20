@@ -120,10 +120,48 @@ def main():
         n2020=int(df[df.year == 2020].finalist.sum()),
         n2021=int(df[df.year == 2021].finalist.sum()),
     )
+    text += _wider_pool_section()
     out = ROOT / "DATASET.md"
     out.write_text(text)
     print("->", out)
     print(cov.to_string())
+
+
+WIDER = """
+## The wider pool
+
+Hack the North on its own is the default. There's a second corpus,
+`data/corpus_multi.parquet`, that adds two more Toronto-area hackathons so you can
+ask the same question against a broader field. Point `CORPUS_PATH` at it to use it.
+
+{events}
+
+One thing to be careful about. Hack the North publishes a museum of its finalists, so
+for HTN we know the actual top ~12 each year - about 5% of the field. No other event
+publishes anything like that, so the only thing we can read off their pages is the
+Devpost prize badge, which includes every sponsor track. Those are not the same bar.
+
+That's why there are two outcome columns. `finalist` keeps the strict meaning for HTN
+and means "won something" everywhere else, so it is **not** comparable between events.
+`won_prize` means "won any prize" for every event including HTN, so that's the one to
+use if you're pooling them. On that measure HTN sits at {htn_won:.1f}%, which is in the
+same range as the rest, and the comparison is fair.
+"""
+
+
+def _wider_pool_section() -> str:
+    path = ROOT / "data" / "corpus_multi.parquet"
+    if not path.exists():
+        return ""
+    m = pd.read_parquet(path)
+    ev = m.groupby("event").agg(
+        editions=("event_id", "nunique"),
+        projects=("slug", "size"),
+        winners=("won_prize", "sum"),
+    )
+    ev["win_%"] = (100 * ev.winners / ev.projects).round(1)
+    htn_won = 100 * m[m.event == "Hack the North"].won_prize.mean()
+    return WIDER.format(events=ev.to_markdown(), htn_won=htn_won)
 
 
 if __name__ == "__main__":
