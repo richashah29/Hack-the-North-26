@@ -4,13 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Win the North</title>
-  <link rel="icon" href="/web/favicon.ico" sizes="32x32" />
-  <link rel="icon" type="image/png" href="/web/favicon.png?v=1" sizes="64x64" />
-  <link rel="apple-touch-icon" href="/web/apple-touch-icon.png?v=1" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/web/style.css?v=73" />
+  <link rel="icon" href="/web/favicon.ico?v=3" sizes="32x32" />
+  <link rel="icon" type="image/png" href="/web/favicon.png?v=3" sizes="64x64" />
+  <link rel="apple-touch-icon" href="/web/apple-touch-icon.png?v=2" />
+  <link rel="stylesheet" href="/web/style.css?v=83" />
 </head>
 <body>
   <div class="campsite" aria-hidden="true">
@@ -137,7 +134,7 @@
         <section class="neighbours" id="neighbours">
           <h2>Nearest neighbours</h2>
           <div class="neighbour-loader" id="neighbour-loader">
-            <img class="neighbour-mark" src="/web/moose-mark.png?v=2" alt="" />
+            <img class="neighbour-mark" src="/web/crown-mark.png?v=1" alt="" />
           </div>
           <p class="empty" id="neighbours-empty" hidden></p>
           <ol id="neighbour-list"></ol>
@@ -146,19 +143,18 @@
         <section class="tracks" id="tracks-panel" hidden>
           <h2>Sponsor tracks</h2>
           <p class="tracks-method" id="tracks-method"></p>
-          <div class="track-filters" id="track-filters" hidden>
-            <button type="button" class="chip" data-filter="actionable">Act</button>
-            <button type="button" class="chip" data-filter="add">Add stream</button>
-            <button type="button" class="chip" data-filter="strengthen">Strengthen</button>
-            <button type="button" class="chip" data-filter="defend">In repo</button>
-            <button type="button" class="chip is-on" data-filter="all">All</button>
-          </div>
           <p class="empty" id="tracks-empty"></p>
           <ol id="track-list"></ol>
         </section>
       </div>
     </aside>
-    <div class="rail-split rail-split-x" id="split-rail-x" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
+    <div class="rail-split rail-split-x" id="split-rail-x" role="separator" aria-orientation="vertical" aria-label="Resize sidebar">
+      <button type="button" id="map-expand" class="map-expand" hidden aria-label="Show more map" aria-expanded="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M10.5 3.5 L5.5 8 L10.5 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </div>
     <section class="stage">
       <canvas id="map"></canvas>
       <div class="year-hud" id="year-hud">
@@ -171,10 +167,16 @@
         </div>
       </div>
       <form class="theme-search" id="theme-search" autocomplete="off">
-        <label for="theme-input">Highlight the map by theme</label>
-        <div class="theme-search-row">
+        <div class="theme-search-shell">
+          <label class="sr-only" for="theme-input">Highlight the map by theme</label>
           <input id="theme-input" type="search" maxlength="400" placeholder="wearables, LLMs, accessibility" />
-          <button type="submit" id="theme-btn">Highlight</button>
+          <button type="submit" class="sr-only" tabindex="-1" aria-hidden="true">Highlight</button>
+          <button type="button" id="theme-btn" class="theme-search-fab" aria-label="Search the map" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.25" fill="none" stroke="currentColor" stroke-width="2" />
+              <path d="M16 16 L20.5 20.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
         <p class="theme-search-note" id="theme-note" hidden></p>
         <ul class="theme-legend" id="theme-legend" hidden></ul>
@@ -199,13 +201,17 @@
         <span><i class="swatch preview"></i> preview</span>
       </div>
       <div class="scrubber" id="scrubber">
-        <button type="button" id="scrub-play" class="scrub-play" aria-label="Play years">Play</button>
+        <button type="button" id="scrub-play" class="scrub-play" aria-label="Play years">
+          <svg class="scrub-play-icon" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 1.5 L10.5 6 L3 10.5 Z" fill="currentColor" />
+          </svg>
+          <span class="scrub-play-label">Play</span>
+        </button>
         <input id="scrub-year" type="range" min="2014" max="2025" value="2025" aria-label="Year" />
         <div class="scrub-meta">
           <span class="scrub-year" id="scrub-year-label">All years</span>
           <span class="scrub-count" id="scrub-finalists"></span>
         </div>
-        <button type="button" id="scrub-all" class="scrub-all">Show all years</button>
       </div>
       <div id="tooltip" class="tooltip" hidden></div>
     </section>
@@ -234,16 +240,16 @@
     <p class="empty" id="chat-hint">Place an idea first, then ask how to sharpen it. Chat will not invent a score.</p>
     <ol id="chat-list"></ol>
     <form id="chat-form" class="chat-form">
-      <textarea id="chat-input" rows="1" maxlength="2000" placeholder="How do I make this a stronger hardware project?" aria-label="Message"></textarea>
+      <textarea id="chat-input" rows="2" maxlength="2000" placeholder="How do I make this a stronger hardware project?" aria-label="Message"></textarea>
       <button type="submit" id="chat-btn" aria-label="Send">Send</button>
       <p class="ask-status" id="chat-status" hidden></p>
     </form>
   </section>
 
   <div class="cursor-moose" id="cursor-moose" hidden aria-hidden="true">
-    <img src="/web/moose-mark.png?v=2" alt="" />
+    <img src="/web/crown-mark.png?v=1" alt="" />
   </div>
 
-  <script src="/web/app.js?v=60"></script>
+  <script src="/web/app.js?v=70"></script>
 </body>
 </html>

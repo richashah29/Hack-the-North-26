@@ -20,9 +20,7 @@
   const trackList = document.getElementById("track-list");
   const tracksEmpty = document.getElementById("tracks-empty");
   const tracksMethod = document.getElementById("tracks-method");
-  const trackFilters = document.getElementById("track-filters");
   let tracksPayload = null;
-  let trackFilter = "all";
   const probPanel = document.getElementById("prob-panel");
   const probNum = document.getElementById("prob-num");
   const probCaveat = document.getElementById("prob-caveat");
@@ -46,7 +44,8 @@
   const scrubYear = document.getElementById("scrub-year");
   const scrubYearLabel = document.getElementById("scrub-year-label");
   const scrubFinalists = document.getElementById("scrub-finalists");
-  const scrubAll = document.getElementById("scrub-all");
+  const PLAY_ICON = '<path d="M3 1.5 L10.5 6 L3 10.5 Z" fill="currentColor" />';
+  const PAUSE_ICON = '<rect x="2.5" y="2" width="2.5" height="8" rx="0.5" fill="currentColor"/><rect x="7" y="2" width="2.5" height="8" rx="0.5" fill="currentColor"/>';
   let lastCoach = null;
   let budgetTouched = false;
   let askInFlight = false;
@@ -338,6 +337,27 @@
     ctx.restore();
   }
 
+  function setThemeSearchOpen(on) {
+    if (!themeForm) return;
+    const open = !!on;
+    themeForm.classList.toggle("is-open", open);
+    if (themeBtn) themeBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      themeForm.classList.remove("is-hover-locked");
+      if (themeInput) window.setTimeout(() => themeInput.focus(), 0);
+      return;
+    }
+    themeForm.classList.add("is-hover-locked");
+    setThemeNote("");
+    if (themeInput) themeInput.blur();
+    if (themeLegend) {
+      themeLegend.querySelectorAll("li.is-open").forEach((li) => {
+        li.classList.remove("is-open");
+        li.setAttribute("aria-expanded", "false");
+      });
+    }
+  }
+
   function setThemeNote(text) {
     if (!themeNote) return;
     const msg = String(text || "").trim();
@@ -351,7 +371,7 @@
     themeLegend.hidden = themeLayers.length === 0;
     themeLegend.innerHTML = themeLayers.map((layer) => {
       const label = escapeHtml(layer.query);
-      return `<li data-id="${layer.id}">
+      return `<li data-id="${layer.id}" aria-expanded="false">
         <i class="theme-dot" style="background:${layer.color}"></i>
         <span>${label}</span>
         <button type="button" class="theme-x" data-remove="${layer.id}" aria-label="Remove ${label}">×</button>
@@ -706,13 +726,22 @@
     cursorMoose.style.top = `${cursorY}px`;
   }
 
+  function bigLoaderSpinning() {
+    return !!(neighbourLoader && !neighbourLoader.hidden && neighbourLoader.classList.contains("is-spinning"));
+  }
+
+  function syncCursorMoose() {
+    document.documentElement.classList.toggle("is-cursor-busy", cursorBusy > 0);
+    if (!cursorMoose) return;
+    const show = cursorBusy > 0 && !bigLoaderSpinning();
+    cursorMoose.hidden = !show;
+    if (show) placeCursorMoose();
+  }
+
   function setCursorBusy(on) {
     cursorBusy += on ? 1 : -1;
     if (cursorBusy < 0) cursorBusy = 0;
-    document.documentElement.classList.toggle("is-cursor-busy", cursorBusy > 0);
-    if (!cursorMoose) return;
-    cursorMoose.hidden = cursorBusy === 0;
-    if (cursorBusy > 0) placeCursorMoose();
+    syncCursorMoose();
   }
 
   function onPointerPos(ev) {
@@ -733,6 +762,7 @@
     if (mode === "off") {
       neighbourLoader.classList.remove("is-spinning");
       neighbourLoader.classList.add("is-fading");
+      syncCursorMoose();
       neighbourLoaderTimer = window.setTimeout(() => {
         neighbourLoader.hidden = true;
         neighbourLoader.classList.remove("is-fading");
@@ -742,11 +772,13 @@
     if (mode === "idle" && hasPlacedOnce) {
       neighbourLoader.hidden = true;
       neighbourLoader.classList.remove("is-spinning", "is-fading");
+      syncCursorMoose();
       return;
     }
     neighbourLoader.hidden = false;
     neighbourLoader.classList.remove("is-fading");
     neighbourLoader.classList.toggle("is-spinning", mode === "spin");
+    syncCursorMoose();
   }
 
   function devpostUrl(p) {
@@ -1287,7 +1319,6 @@
     tracksPanel.hidden = false;
     trackList.innerHTML = "";
     if (!payload.ok) {
-      if (trackFilters) trackFilters.hidden = true;
       if (tracksMethod) {
         tracksMethod.hidden = true;
         tracksMethod.textContent = "";
@@ -1308,17 +1339,10 @@
         ? `Likeness to ${nWin} labeled prize winners across ${nEv} events. Recurring MLH families share a sample. This is not the 12-finalist score.`
         : "Likeness to labeled prize winners across events. This is not the 12-finalist score.";
     }
-    if (trackFilters) trackFilters.hidden = false;
-    const rows = (payload.ranked || []).filter((row) => {
-      if (trackFilter === "all") return true;
-      if (trackFilter === "actionable") return row.action === "add" || row.action === "strengthen";
-      return row.action === trackFilter;
-    });
+    const rows = payload.ranked || [];
     if (!rows.length) {
       tracksEmpty.hidden = false;
-      tracksEmpty.textContent = trackFilter === "actionable"
-        ? "No add or strengthen moves. Try All, or mention a sponsor SDK in the idea."
-        : "Nothing in this filter.";
+      tracksEmpty.textContent = "No sponsor tracks for this idea.";
       return;
     }
     tracksEmpty.hidden = true;
@@ -1361,16 +1385,6 @@
       `;
       trackList.appendChild(li);
     }
-  }
-
-  if (trackFilters) {
-    trackFilters.addEventListener("click", (ev) => {
-      const btn = ev.target.closest("[data-filter]");
-      if (!btn) return;
-      trackFilter = btn.dataset.filter;
-      trackFilters.querySelectorAll(".chip").forEach((c) => c.classList.toggle("is-on", c === btn));
-      if (tracksPayload) renderTracks(tracksPayload);
-    });
   }
 
   function renderProb(data) {
@@ -1431,15 +1445,22 @@
     return (mapData.points || []).filter((p) => inSelectedEvent(p) && p.finalist && (cap == null || Number(p.year) <= cap)).length;
   }
 
+  function setScrubPlayUi(on) {
+    if (!scrubPlay) return;
+    scrubPlay.classList.toggle("is-on", !!on);
+    const label = scrubPlay.querySelector(".scrub-play-label");
+    const icon = scrubPlay.querySelector(".scrub-play-icon");
+    if (label) label.textContent = on ? "Pause" : "Play";
+    if (icon) icon.innerHTML = on ? PAUSE_ICON : PLAY_ICON;
+    scrubPlay.setAttribute("aria-label", on ? "Pause years" : "Play years");
+  }
+
   function stopPlay() {
     if (playTimer) {
       clearTimeout(playTimer);
       playTimer = null;
     }
-    if (scrubPlay) {
-      scrubPlay.classList.remove("is-on");
-      scrubPlay.textContent = "Play";
-    }
+    setScrubPlayUi(false);
   }
 
   function syncYearRange() {
@@ -1500,24 +1521,8 @@
 
   function renderEventToggles() {
     if (!eventToggles || !eventTogglesRow) return;
-    if (eventCatalog.length < 2) {
-      eventToggles.hidden = true;
-      eventTogglesRow.innerHTML = "";
-      return;
-    }
-    eventToggles.hidden = false;
+    eventToggles.hidden = true;
     eventTogglesRow.innerHTML = "";
-    for (const ev of eventCatalog) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "event-chip" + (selectedEvents.has(ev.name) ? " is-on" : "");
-      btn.setAttribute("aria-pressed", selectedEvents.has(ev.name) ? "true" : "false");
-      btn.setAttribute("aria-label", `${ev.name}, ${fmtN(ev.n)} projects`);
-      btn.textContent = eventChipLabel(ev.name);
-      btn.addEventListener("click", () => toggleEvent(ev.name));
-      eventTogglesRow.appendChild(btn);
-    }
-    renderEventNote();
   }
 
   function toggleEvent(name) {
@@ -1552,10 +1557,7 @@
       stopPlay();
       return;
     }
-    if (scrubPlay) {
-      scrubPlay.classList.add("is-on");
-      scrubPlay.textContent = "Pause";
-    }
+    setScrubPlayUi(true);
     yearCap = YEAR_MIN;
     updateScrubber();
     draw();
@@ -1577,9 +1579,6 @@
   }
 
   if (scrubPlay) scrubPlay.addEventListener("click", playYears);
-  if (scrubAll) {
-    scrubAll.addEventListener("click", () => setYearCap(null));
-  }
   if (scrubYear) {
     scrubYear.addEventListener("input", () => {
       setYearCap(Number(scrubYear.value));
@@ -1589,18 +1588,66 @@
   if (themeLegend) {
     themeLegend.addEventListener("click", (ev) => {
       const btn = ev.target.closest("[data-remove]");
-      if (!btn) return;
-      removeThemeLayer(Number(btn.getAttribute("data-remove")));
+      if (btn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        removeThemeLayer(Number(btn.getAttribute("data-remove")));
+        return;
+      }
+      if (themeForm.classList.contains("is-open")) return;
+      const li = ev.target.closest("li[data-id]");
+      if (!li) return;
+      const pinned = li.classList.toggle("is-open");
+      li.setAttribute("aria-expanded", pinned ? "true" : "false");
+      if (!pinned) li.classList.add("is-hover-locked");
+      else li.classList.remove("is-hover-locked");
+    });
+    themeLegend.addEventListener("pointerout", (ev) => {
+      const li = ev.target.closest("li[data-id]");
+      if (!li || li.contains(ev.relatedTarget)) return;
+      li.classList.remove("is-hover-locked");
     });
   }
 
   if (themeForm) {
+    if (themeBtn) {
+      themeBtn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        if (!themeForm.classList.contains("is-open")) setThemeSearchOpen(true);
+        else setThemeSearchOpen(false);
+      });
+    }
+    if (themeInput) {
+      themeInput.addEventListener("focus", () => setThemeSearchOpen(true));
+      themeInput.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        themeForm.requestSubmit();
+      });
+    }
+    themeForm.addEventListener("pointerleave", () => {
+      themeForm.classList.remove("is-hover-locked");
+    });
+    document.addEventListener("pointerdown", (ev) => {
+      if (!themeForm.classList.contains("is-open")) return;
+      if (themeForm.contains(ev.target)) return;
+      setThemeSearchOpen(false);
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape" || !themeForm.classList.contains("is-open")) return;
+      setThemeSearchOpen(false);
+      if (themeInput) themeInput.blur();
+    });
     themeForm.addEventListener("submit", async (ev) => {
       ev.preventDefault();
+      if (!themeForm.classList.contains("is-open")) {
+        setThemeSearchOpen(true);
+        return;
+      }
       if (themeInFlight) return;
       const text = (themeInput && themeInput.value.trim()) || "";
       if (!text) {
-        setThemeNote("no matches");
+        setThemeNote("Type a theme, then search.");
         return;
       }
       themeInFlight = true;
@@ -1678,7 +1725,6 @@
     }
     askInFlight = true;
     askBtn.disabled = true;
-    setCursorBusy(true);
     setNeighbourLoader("spin");
     if (askStatus) {
       askStatus.hidden = false;
@@ -1716,6 +1762,7 @@
       hasPlacedOnce = true;
       setNeighbourLoader("off");
       setAnswered(true);
+      setExploreTriptych(true);
       const railNorth = document.getElementById("rail-north");
       if (railNorth) railNorth.scrollTop = 0;
       if (coachPanel) {
@@ -1768,13 +1815,13 @@
     } finally {
       askInFlight = false;
       askBtn.disabled = false;
-      setCursorBusy(false);
     }
   });
 
   if (askBack) {
     askBack.addEventListener("click", () => {
       setAnswered(false);
+      setExploreTriptych(false, { animate: false });
       if (askStatus) {
         askStatus.hidden = true;
         askStatus.classList.remove("is-loading");
@@ -2102,7 +2149,7 @@
   function svgText(attrs, text, kind) {
     const el = svgEl("text", { ...attrs, class: `chart-${kind}` }, text);
     el.setAttribute("font-size", kind === "label" || kind === "num" ? "12" : "11");
-    el.setAttribute("font-family", kind === "tick" || kind === "num" ? "JetBrains Mono, ui-monospace, monospace" : "Castledown, sans-serif");
+    el.setAttribute("font-family", "Satoshi, system-ui, sans-serif");
     return el;
   }
 
@@ -2493,19 +2540,34 @@
     new ResizeObserver(() => resize()).observe(canvas);
   }
 
+  let setExploreTriptych = () => {};
+
   (function bindLayoutSplits() {
     const root = document.documentElement;
     const rail = document.querySelector(".rail");
     const splitX = document.getElementById("split-rail-x");
     const splitY = document.getElementById("split-rail-y");
     const railNorth = document.getElementById("rail-north");
+    const railScroll = document.getElementById("rail-scroll");
+    const mapExpand = document.getElementById("map-expand");
     const RAIL_MIN = 260;
     const RAIL_MAX = 720;
+    const MID_MIN = 260;
+    const MID_MAX = 520;
     const MAIN_MIN = 240;
+    const BEAT_MS = 420;
+    let layoutBusy = false;
+    let stackedRailW = 360;
+    let wantTriptych = true;
     try {
       const w = Number(localStorage.getItem("wtn-rail-w"));
       if (Number.isFinite(w) && w >= RAIL_MIN) {
         root.style.setProperty("--rail-w", `${Math.min(RAIL_MAX, w)}px`);
+        stackedRailW = Math.min(RAIL_MAX, w);
+      }
+      const mid = Number(localStorage.getItem("wtn-mid-w"));
+      if (Number.isFinite(mid) && mid >= MID_MIN) {
+        root.style.setProperty("--mid-w", `${Math.min(MID_MAX, mid)}px`);
       }
       const h = Number(localStorage.getItem("wtn-answer-h"));
       if (Number.isFinite(h) && h >= MAIN_MIN) {
@@ -2513,10 +2575,184 @@
       }
     } catch (_) { /* ignore */ }
 
+    function narrowExplore() {
+      return window.matchMedia("(max-width: 1100px)").matches;
+    }
+
+    function syncMapExpandBtn() {
+      const explore = document.querySelector(".explore");
+      if (!mapExpand || !explore) return;
+      const placed = !!(askResult && !askResult.hidden);
+      mapExpand.hidden = !placed || narrowExplore();
+      const open = explore.classList.contains("is-triptych");
+      mapExpand.classList.toggle("is-open", open);
+      mapExpand.setAttribute("aria-expanded", open ? "true" : "false");
+      mapExpand.setAttribute("aria-label", open ? "Show more map" : "Show neighbours beside the map");
+    }
+
+    function fitTriptychWidths() {
+      const explore = document.querySelector(".explore");
+      if (!explore) return;
+      const total = explore.getBoundingClientRect().width;
+      let railW = 340;
+      let midW = parseInt(getComputedStyle(root).getPropertyValue("--mid-w"), 10) || 360;
+      midW = Math.max(MID_MIN, Math.min(MID_MAX, midW));
+      const mapMin = 280;
+      const split = 6;
+      const budget = total - split - mapMin;
+      if (railW + midW > budget) {
+        const scale = Math.max(0.1, budget / (railW + midW));
+        railW = Math.max(RAIL_MIN, Math.round(railW * scale));
+        midW = Math.max(MID_MIN, Math.round(budget - railW));
+      }
+      root.style.setProperty("--rail-w", `${railW}px`);
+      root.style.setProperty("--mid-w", `${midW}px`);
+    }
+
+    function clearSouthTransform() {
+      if (!railScroll) return;
+      railScroll.style.transition = "";
+      railScroll.style.transform = "";
+      railScroll.style.transformOrigin = "";
+    }
+
+    setExploreTriptych = function setExploreTriptych(open, opts) {
+      const animate = !opts || opts.animate !== false;
+      const explore = document.querySelector(".explore");
+      if (!explore || !railScroll || !rail) return;
+      if (!open) wantTriptych = false;
+      if (open) wantTriptych = true;
+      if (narrowExplore()) {
+        explore.classList.remove("is-triptych", "is-layout-animating");
+        clearSouthTransform();
+        layoutBusy = false;
+        syncMapExpandBtn();
+        resize();
+        return;
+      }
+      const currently = explore.classList.contains("is-triptych");
+      if (currently === !!open) {
+        syncMapExpandBtn();
+        return;
+      }
+      if (layoutBusy) return;
+
+      if (open) {
+        stackedRailW = parseInt(getComputedStyle(root).getPropertyValue("--rail-w"), 10) || stackedRailW || 360;
+        fitTriptychWidths();
+      }
+
+      const snap = () => {
+        explore.classList.toggle("is-triptych", !!open);
+        explore.classList.remove("is-layout-animating");
+        if (!open) root.style.setProperty("--rail-w", `${stackedRailW}px`);
+        clearSouthTransform();
+        layoutBusy = false;
+        syncMapExpandBtn();
+        resize();
+      };
+
+      if (!animate || reducedMotion) {
+        snap();
+        return;
+      }
+
+      layoutBusy = true;
+      const first = railScroll.getBoundingClientRect();
+      explore.classList.add("is-layout-animating");
+      explore.classList.toggle("is-triptych", !!open);
+      if (!open) root.style.setProperty("--rail-w", `${stackedRailW}px`);
+      resize();
+      const last = railScroll.getBoundingClientRect();
+      const dx = first.left - last.left;
+      const dy = first.top - last.top;
+      const sx = first.width / Math.max(1, last.width);
+      const sy = first.height / Math.max(1, last.height);
+      railScroll.style.transformOrigin = "top left";
+      railScroll.style.transition = "none";
+      railScroll.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+      void railScroll.offsetWidth;
+      const ease = "cubic-bezier(0.22, 1, 0.36, 1)";
+      const mid = open
+        ? `translate(0px, ${dy}px) scale(${sx}, ${sy})`
+        : `translate(${dx}px, 0px) scale(${sx}, ${sy})`;
+      let phase = 0;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        railScroll.removeEventListener("transitionend", onEnd);
+        explore.classList.remove("is-layout-animating");
+        clearSouthTransform();
+        layoutBusy = false;
+        syncMapExpandBtn();
+        resize();
+      };
+      const onEnd = (ev) => {
+        if (ev && ev.target !== railScroll) return;
+        if (ev && ev.propertyName && ev.propertyName !== "transform") return;
+        if (phase === 0) {
+          phase = 1;
+          railScroll.style.transform = "none";
+          return;
+        }
+        finish();
+      };
+      railScroll.addEventListener("transitionend", onEnd);
+      railScroll.style.transition = `transform ${BEAT_MS}ms ${ease}`;
+      railScroll.style.transform = mid;
+      const started = performance.now();
+      const tick = () => {
+        resize();
+        if (!finished && performance.now() - started < BEAT_MS * 2 + 120) {
+          requestAnimationFrame(tick);
+        }
+      };
+      requestAnimationFrame(tick);
+      window.setTimeout(() => {
+        if (phase === 0) {
+          phase = 1;
+          railScroll.style.transform = "none";
+        }
+        window.setTimeout(finish, BEAT_MS + 80);
+      }, BEAT_MS + 80);
+    };
+
+    if (mapExpand) {
+      mapExpand.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+      mapExpand.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const explore = document.querySelector(".explore");
+        if (!explore) return;
+        setExploreTriptych(!explore.classList.contains("is-triptych"));
+      });
+    }
+
+    window.matchMedia("(max-width: 1100px)").addEventListener("change", (ev) => {
+      const explore = document.querySelector(".explore");
+      if (!explore) return;
+      if (ev.matches) {
+        explore.classList.remove("is-triptych", "is-layout-animating");
+        clearSouthTransform();
+        layoutBusy = false;
+        root.style.setProperty("--rail-w", `${stackedRailW}px`);
+        syncMapExpandBtn();
+        resize();
+        return;
+      }
+      if (askResult && !askResult.hidden && wantTriptych) {
+        setExploreTriptych(true, { animate: false });
+      } else {
+        syncMapExpandBtn();
+      }
+    });
+
     function bind(el, kind) {
       if (!el) return;
       el.addEventListener("pointerdown", (ev) => {
         if (ev.button !== 0) return;
+        if (ev.target.closest && ev.target.closest("#map-expand")) return;
         ev.preventDefault();
         el.setPointerCapture(ev.pointerId);
         document.body.classList.add("is-resizing");
@@ -2526,9 +2762,16 @@
             const explore = document.querySelector(".explore");
             if (!explore) return;
             const left = explore.getBoundingClientRect().left;
-            const next = Math.max(RAIL_MIN, Math.min(RAIL_MAX, e.clientX - left));
-            root.style.setProperty("--rail-w", `${Math.round(next)}px`);
-          } else if (rail && railNorth) {
+            if (explore.classList.contains("is-triptych")) {
+              const railW = parseInt(getComputedStyle(root).getPropertyValue("--rail-w"), 10) || 340;
+              const next = Math.max(MID_MIN, Math.min(MID_MAX, e.clientX - left - railW));
+              root.style.setProperty("--mid-w", `${Math.round(next)}px`);
+            } else {
+              const next = Math.max(RAIL_MIN, Math.min(RAIL_MAX, e.clientX - left));
+              root.style.setProperty("--rail-w", `${Math.round(next)}px`);
+              stackedRailW = Math.round(next);
+            }
+          } else if (rail && railNorth && !document.querySelector(".explore.is-triptych")) {
             const top = railNorth.getBoundingClientRect().top;
             const southMin = 88;
             const maxH = rail.getBoundingClientRect().height - southMin - 48;
@@ -2543,9 +2786,15 @@
           el.removeEventListener("pointerup", up);
           el.removeEventListener("pointercancel", up);
           try {
-            const w = root.style.getPropertyValue("--rail-w").trim();
+            const explore = document.querySelector(".explore");
+            if (explore && explore.classList.contains("is-triptych")) {
+              const mid = root.style.getPropertyValue("--mid-w").trim();
+              if (mid.endsWith("px")) localStorage.setItem("wtn-mid-w", String(parseInt(mid, 10)));
+            } else {
+              const w = root.style.getPropertyValue("--rail-w").trim();
+              if (w.endsWith("px")) localStorage.setItem("wtn-rail-w", String(parseInt(w, 10)));
+            }
             const h = root.style.getPropertyValue("--rail-main-h").trim();
-            if (w.endsWith("px")) localStorage.setItem("wtn-rail-w", String(parseInt(w, 10)));
             if (h.endsWith("px")) localStorage.setItem("wtn-answer-h", String(parseInt(h, 10)));
           } catch (_) { /* ignore */ }
           resize();
