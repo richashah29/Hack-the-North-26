@@ -10,6 +10,7 @@
   const askResult = document.getElementById("ask-result");
   const askBack = document.getElementById("ask-back");
   const neighbourLoader = document.getElementById("neighbour-loader");
+  const cursorMoose = document.getElementById("cursor-moose");
   const neighbourList = document.getElementById("neighbour-list");
   const neighboursEmpty = document.getElementById("neighbours-empty");
   const twinsEl = document.getElementById("twins");
@@ -662,6 +663,33 @@
     return `${Math.round(Math.max(0, Math.min(100, pct)))}% similar`;
   }
 
+  let cursorBusy = 0;
+  let cursorX = 0;
+  let cursorY = 0;
+
+  function placeCursorMoose() {
+    if (!cursorMoose || cursorMoose.hidden) return;
+    cursorMoose.style.left = `${cursorX}px`;
+    cursorMoose.style.top = `${cursorY}px`;
+  }
+
+  function setCursorBusy(on) {
+    cursorBusy += on ? 1 : -1;
+    if (cursorBusy < 0) cursorBusy = 0;
+    if (!cursorMoose) return;
+    cursorMoose.hidden = cursorBusy === 0;
+    if (cursorBusy > 0) placeCursorMoose();
+  }
+
+  function onPointerPos(ev) {
+    cursorX = ev.clientX;
+    cursorY = ev.clientY;
+    if (cursorBusy > 0) placeCursorMoose();
+  }
+
+  document.addEventListener("pointermove", onPointerPos);
+  document.addEventListener("pointerdown", onPointerPos);
+
   function setNeighbourLoader(mode) {
     if (!neighbourLoader) return;
     if (neighbourLoaderTimer) {
@@ -942,6 +970,7 @@
     draw();
     const ac = new AbortController();
     stackAbort = ac;
+    setCursorBusy(true);
     try {
       const body = {
         text: lastIdeaText || (input && input.value.trim()) || "",
@@ -982,6 +1011,8 @@
       if (fallback) playStackGhost(fallback);
       else draw();
       console.error(err);
+    } finally {
+      setCursorBusy(false);
     }
   }
 
@@ -1164,6 +1195,7 @@
       coachInFlight = true;
       coachBtn.disabled = true;
       coachBtn.textContent = "Coaching…";
+      setCursorBusy(true);
       setCoachOpen(true);
       resetPins();
       syncTimeUi(lastCoach);
@@ -1206,6 +1238,7 @@
         coachInFlight = false;
         coachBtn.disabled = false;
         coachBtn.textContent = "Coach me";
+        setCursorBusy(false);
       }
     });
   }
@@ -1446,6 +1479,7 @@
       }
       themeInFlight = true;
       if (themeBtn) themeBtn.disabled = true;
+      setCursorBusy(true);
       setThemeNote("Highlighting…");
       try {
         const res = await fetch("/api/search", {
@@ -1497,6 +1531,7 @@
       } finally {
         themeInFlight = false;
         if (themeBtn) themeBtn.disabled = false;
+        setCursorBusy(false);
       }
     });
   }
@@ -1808,6 +1843,7 @@
       return;
     }
     previewInFlight = true;
+    setCursorBusy(true);
     if (chatStatus) {
       chatStatus.hidden = false;
       chatStatus.classList.add("is-loading");
@@ -1838,6 +1874,7 @@
       console.error(err);
     } finally {
       previewInFlight = false;
+      setCursorBusy(false);
     }
   }
 
@@ -1872,6 +1909,7 @@
       }
       chatInFlight = true;
       if (chatBtn) chatBtn.disabled = true;
+      setCursorBusy(true);
       chatThread.push({ role: "user", content: text });
       appendChat("user", `<p>${escapeHtml(text)}</p>`);
       if (chatInput) chatInput.value = "";
@@ -1910,6 +1948,7 @@
       } finally {
         chatInFlight = false;
         if (chatBtn) chatBtn.disabled = false;
+        setCursorBusy(false);
       }
     });
   }

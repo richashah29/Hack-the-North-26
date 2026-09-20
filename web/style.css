@@ -559,12 +559,32 @@ body.is-resizing-y { cursor: row-resize; }
   to { transform: rotate(360deg); }
 }
 
+@keyframes neighbour-pulse {
+  50% { opacity: 0.45; }
+}
+
+.cursor-moose {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 80;
+  width: 32px;
+  height: 32px;
+  margin: 16px 0 0 14px;
+  pointer-events: none;
+}
+
+.cursor-moose img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: neighbour-spin 0.9s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .neighbour-loader.is-spinning .neighbour-mark {
     animation: neighbour-pulse 1.1s ease-in-out infinite;
-  }
-  @keyframes neighbour-pulse {
-    50% { opacity: 0.45; }
   }
 }
 
@@ -1871,4 +1891,5 @@ body.is-resizing-y { cursor: row-resize; }
   .empty.is-loading,
   .theme-search-note.is-loading { animation: none; }
   .cloud { animation: none; }
+  .cursor-moose img { animation: neighbour-pulse 1.1s ease-in-out infinite; }
 }
