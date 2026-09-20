@@ -25,11 +25,6 @@ how many projects become finalists. But some neighbourhoods of ideas do better t
   terms made finalist 6.4% of the time. Projects with impactful "solving a real
   problem" framing made it 5.4% of the time.
 
-## Beyond Hack the North
-
-HTN on its own is the default search space. We also scraped **UofTHacks** (8 editions) and **GenAI Genesis** (3), so you can ask the same question within a wider area of projects in Toronto. Point `CORPUS_PATH` at `data/corpus_multi.parquet` to use it.
-
-The default HTN search space, and the broader Toronto area project space measure slightly different things. Since HTN publishes a museum of its finalists, we know the real top ~12 each year. Nobody else does this, so elsewhere the only signal is the Devpost prize badge, which includes sponsor tracks. The `won_prize` column means the same thing everywhere if you want to compare fairly.
 
 The full dataset and how we built it is in [DATASET.md](DATASET.md).
 
