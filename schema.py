@@ -241,6 +241,22 @@ def project_from_row(row: dict[str, Any]) -> Project:
     )
 
 
+def load_explore_corpus() -> list[Project]:
+    """Load the widest corpus the map can toggle, without flipping CORPUS_PATH.
+
+    CORPUS_PATH still wins when set. Otherwise corpus_multi.parquet is preferred
+    so Explore can filter Hack the North / UofTHacks / GenAI Genesis. The HTN-only
+    parquet stays the default when the multi file is missing.
+    """
+    env = (os.environ.get("CORPUS_PATH") or "").strip()
+    if env:
+        return load_corpus()
+    multi = ROOT / MULTI_CORPUS_PATH
+    if multi.exists():
+        return load_corpus(multi)
+    return load_corpus()
+
+
 def load_corpus(path: str | Path | None = None) -> list[Project]:
     """Falls back to sample.json when the parquet isn't there yet."""
     parquet = _resolve(path) if path is not None else corpus_path()

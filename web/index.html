@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/web/style.css?v=70" />
+  <link rel="stylesheet" href="/web/style.css?v=73" />
 </head>
 <body>
   <div class="campsite" aria-hidden="true">
@@ -164,6 +164,11 @@
       <div class="year-hud" id="year-hud">
         <div class="year-hud-num" id="year-hud-num">2014-2025</div>
         <div class="year-hud-sub" id="year-hud-sub"></div>
+        <div class="event-toggles" id="event-toggles" hidden>
+          <p class="event-toggles-label">Corpus</p>
+          <div class="event-toggles-row" id="event-toggles-row"></div>
+          <p class="event-toggles-note" id="event-toggles-note" hidden></p>
+        </div>
       </div>
       <form class="theme-search" id="theme-search" autocomplete="off">
         <label for="theme-input">Highlight the map by theme</label>
@@ -239,6 +244,6 @@
     <img src="/web/moose-mark.png?v=2" alt="" />
   </div>
 
-  <script src="/web/app.js?v=57"></script>
+  <script src="/web/app.js?v=59"></script>
 </body>
 </html>

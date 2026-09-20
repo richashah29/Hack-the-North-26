@@ -50,6 +50,7 @@ class AskBody(BaseModel):
     text: str = Field(default="", max_length=8000)
     github: str = Field(default="", max_length=400)
     devpost: str = Field(default="", max_length=400)
+    events: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("text", "github", "devpost", mode="before")
     @classmethod
@@ -60,11 +61,23 @@ class AskBody(BaseModel):
             return v
         return _clean_text(v)
 
+    @field_validator("events", mode="before")
+    @classmethod
+    def _events(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [_clean_text(x) for x in v.split(",") if str(x).strip()][:8]
+        if isinstance(v, list):
+            return [_clean_text(str(x)) for x in v[:8]]
+        return []
+
 
 class CoachBody(BaseModel):
     text: str = Field(default="", max_length=8000)
     github: str = Field(default="", max_length=400)
     time_budget_hours: float | None = Field(default=None, ge=0, le=168)
+    events: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("text", "github", mode="before")
     @classmethod
@@ -74,6 +87,17 @@ class CoachBody(BaseModel):
         if not isinstance(v, str):
             return v
         return _clean_text(v)
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _events(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [_clean_text(x) for x in v.split(",") if str(x).strip()][:8]
+        if isinstance(v, list):
+            return [_clean_text(str(x)) for x in v[:8]]
+        return []
 
 
 class CoachMoveIn(BaseModel):
@@ -143,6 +167,7 @@ class ChatBody(BaseModel):
 
 class SearchBody(BaseModel):
     text: str = Field(default="", max_length=8000)
+    events: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("text", mode="before")
     @classmethod
@@ -152,6 +177,17 @@ class SearchBody(BaseModel):
         if not isinstance(v, str):
             return v
         return _clean_text(v)
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _events(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [_clean_text(x) for x in v.split(",") if str(x).strip()][:8]
+        if isinstance(v, list):
+            return [_clean_text(str(x)) for x in v[:8]]
+        return []
 
 
 @app.exception_handler(RequestValidationError)
@@ -190,7 +226,7 @@ def favicon() -> FileResponse:
 def config() -> JSONResponse:
     from engine import engine, json_safe
 
-    n_emb = 0 if engine.embeddings is None else int(engine.embeddings.shape[0])
+    n_emb = 0 if engine.emb_ok is None else int(engine.emb_ok.sum())
     payload = {
         "sentry_dsn": os.getenv("SENTRY_FRONTEND_DSN", "").strip(),
         "source": Path(engine.source).name,
@@ -200,6 +236,7 @@ def config() -> JSONResponse:
         "n_embeddings": n_emb,
         "n_prize_winners": 0 if engine.prize_memory is None else len(engine.prize_memory.winners),
         "n_prize_events": 0 if engine.prize_memory is None else engine.prize_memory.n_events,
+        "events": engine.available_events(),
     }
     return JSONResponse(json_safe(payload))
 
@@ -234,7 +271,7 @@ def api_ask(body: AskBody) -> JSONResponse:
     if not text and not github:
         raise HTTPException(status_code=400, detail="provide a description or a GitHub URL")
     try:
-        return JSONResponse(json_safe(engine.ask(text, github=github, devpost=devpost)))
+        return JSONResponse(json_safe(engine.ask(text, github=github, devpost=devpost, events=body.events)))
     except Exception as exc:
         try:
             pairs, xy = engine._tfidf_neighbours(text or "project")
@@ -388,7 +425,7 @@ def api_search(body: SearchBody) -> JSONResponse:
         raise HTTPException(status_code=400, detail="provide a description")
     empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
     try:
-        return JSONResponse(json_safe(engine.search(text)))
+        return JSONResponse(json_safe(engine.search(text, events=body.events)))
     except Exception as exc:
         print(f"search failed ({exc})")
         return JSONResponse(json_safe(empty))

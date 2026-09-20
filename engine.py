@@ -24,7 +24,7 @@ from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from schema import Project, ROOT, load_corpus
+from schema import CORPUS_PATH, MULTI_CORPUS_PATH, Project, ROOT, load_corpus, load_explore_corpus
 
 DATA = ROOT / "data"
 
@@ -56,6 +56,9 @@ EMB_PATH = DATA / "embeddings.npy"
 MODEL_PATH = DATA / "model.pkl"
 EVENT_PATH = DATA / "event.json"
 FINDINGS_PATH = DATA / "findings.json"
+EMB_CACHE_PATH = DATA / "emb_cache.json"
+EVENT_FAMILIES = ("Hack the North", "UofTHacks", "GenAI Genesis")
+DEFAULT_EVENT = "Hack the North"
 
 GROUND_RULES = (
     "Use ONLY the CONTEXT below. If the answer isn't in it, say it's not in the data. "
@@ -217,6 +220,11 @@ def _bounds(xs: list[float], ys: list[float], pad: float = 0.12) -> dict[str, fl
     }
 
 
+def _family(project: Project) -> str:
+    name = str(getattr(project, "event", "") or "").strip()
+    return name or DEFAULT_EVENT
+
+
 def _point_payload(project: Project, x: float, y: float) -> dict[str, Any]:
     return {
         "x": float(x),
@@ -226,6 +234,7 @@ def _point_payload(project: Project, x: float, y: float) -> dict[str, Any]:
         "year": int(project.year or 0),
         "finalist": bool(project.finalist),
         "tagline": str(project.tagline or ""),
+        "event": _family(project),
     }
 
 
@@ -410,6 +419,7 @@ class Engine:
         self.by_slug: dict[str, Project] = {}
         self.map_data: dict[str, Any] = {"points": [], "bounds": {}}
         self.embeddings: np.ndarray | None = None
+        self.emb_ok: np.ndarray | None = None
         self.model_blob: dict[str, Any] | None = None
         self.vectorizer: TfidfVectorizer | None = None
         self.tfidf: Any = None
@@ -433,8 +443,13 @@ class Engine:
     def load(self) -> None:
         from schema import corpus_source
 
-        self.projects = load_corpus()
-        self.source = corpus_source()
+        self.projects = load_explore_corpus()
+        env = (os.environ.get("CORPUS_PATH") or "").strip()
+        multi = ROOT / MULTI_CORPUS_PATH
+        if not env and multi.exists():
+            self.source = str(multi)
+        else:
+            self.source = corpus_source()
         self.by_slug = {p.slug: p for p in self.projects}
         self._require_prizes_file()
         self._require_event_file()
@@ -454,10 +469,23 @@ class Engine:
         self._assert_aligned()
         self._ensure_p_ref()
         n = len(self.projects)
-        n_emb = 0 if self.embeddings is None else int(self.embeddings.shape[0])
+        n_emb = 0 if self.emb_ok is None else int(np.asarray(self.emb_ok).sum())
         n_map = len((self.map_data or {}).get("points") or [])
         n_pool = 0 if not self.prize_memory else len(self.prize_memory.winners)
-        print(f"loaded corpus={n} embeddings={n_emb} map={n_map} p_ref={int(self.p_ref.size)} prize_winners={n_pool}")
+        counts = {}
+        for p in self.projects:
+            counts[_family(p)] = counts.get(_family(p), 0) + 1
+        print(
+            f"loaded corpus={n} embeddings={n_emb}/{n} map={n_map} "
+            f"p_ref={int(self.p_ref.size)} prize_winners={n_pool} events={counts}"
+        )
+        missing = n - n_emb
+        extra_events = [name for name in EVENT_FAMILIES if name != DEFAULT_EVENT and counts.get(name)]
+        if missing and extra_events:
+            print(
+                f"flag: {missing} rows have no OpenAI embedding (cache/npy are HTN-only). "
+                f"{', '.join(extra_events)} will use TF-IDF until those slugs are in emb_cache.json."
+            )
 
     def _fit_fallback(self) -> None:
         texts = [p.embed_text() for p in self.projects]
@@ -519,25 +547,79 @@ class Engine:
                 "The map would pin the wrong projects. Rebuild with build.py."
             )
 
-    def _load_embeddings(self) -> None:
-        src = emb_path()
+    def _load_cache_vectors(self) -> dict[str, list[float]]:
+        src = EMB_CACHE_PATH
         if not src.exists():
+            return {}
+        try:
+            raw = json.loads(src.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _load_htn_slug_order(self) -> list[str]:
+        htn_path = ROOT / CORPUS_PATH
+        if not htn_path.exists():
+            return []
+        try:
+            return [p.slug for p in load_corpus(htn_path)]
+        except Exception as extra:
+            print(f"HTN corpus for embedding align skipped ({extra})")
+            return []
+
+    def _load_embeddings(self) -> None:
+        n = len(self.projects)
+        src = emb_path()
+        cache = self._load_cache_vectors()
+        npy = None
+        dim = 0
+        if src.exists():
+            try:
+                npy = np.load(src)
+            except Exception as extra:
+                raise RuntimeError(f"embeddings.npy unreadable at {src}: {extra}") from extra
+            dim = int(npy.shape[1]) if npy is not None and npy.ndim == 2 else 0
+        if not dim and cache:
+            sample = next(iter(cache.values()), None)
+            if isinstance(sample, list) and sample:
+                dim = len(sample)
+        if not dim:
             print(f"artifact embeddings.npy missing at {src} — TF-IDF fallback")
             self.embeddings = None
             self.embeddings_norm = None
+            self.emb_ok = None
             return
-        try:
-            arr = np.load(src)
-        except Exception as exc:
-            raise RuntimeError(f"embeddings.npy unreadable at {src}: {exc}") from exc
-        if arr.shape[0] != len(self.projects):
-            raise RuntimeError(
-                f"embeddings.npy has {arr.shape[0]} rows but corpus has {len(self.projects)}. "
-                "Neighbour rows would attach to the wrong projects. Rebuild with build.py."
-            )
+
+        arr = np.full((n, dim), np.nan, dtype=np.float32)
+        index = {p.slug: i for i, p in enumerate(self.projects)}
+        if npy is not None and npy.ndim == 2 and int(npy.shape[1]) == dim:
+            if int(npy.shape[0]) == n:
+                arr = np.asarray(npy, dtype=np.float32)
+            else:
+                htn_slugs = self._load_htn_slug_order()
+                if len(htn_slugs) == int(npy.shape[0]):
+                    for j, slug in enumerate(htn_slugs):
+                        i = index.get(slug)
+                        if i is not None:
+                            arr[i] = np.asarray(npy[j], dtype=np.float32)
+        for slug, vec in cache.items():
+            i = index.get(str(slug))
+            if i is None:
+                continue
+            if np.isfinite(arr[i]).all():
+                continue
+            v = np.asarray(vec, dtype=np.float32).ravel()
+            if int(v.size) == dim:
+                arr[i] = v
+        ok = np.isfinite(arr).all(axis=1)
+        filled = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        norms = np.linalg.norm(filled, axis=1, keepdims=True) + 1e-9
+        normed = filled / norms
+        normed[~ok] = 0.0
         self.embeddings = arr
-        norms = np.linalg.norm(arr, axis=1, keepdims=True) + 1e-9
-        self.embeddings_norm = arr / norms
+        self.embeddings_norm = normed
+        self.emb_ok = ok
+        print(f"embeddings aligned {int(ok.sum())}/{n} rows dim={dim}")
 
     def _load_map(self) -> None:
         src = map_path()
@@ -547,17 +629,141 @@ class Engine:
             return
         try:
             payload = json.loads(src.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"map.json unreadable at {src}: {exc}") from exc
+        except (OSError, json.JSONDecodeError) as extra:
+            raise RuntimeError(f"map.json unreadable at {src}: {extra}") from extra
         points = payload.get("points") if isinstance(payload, dict) else None
         if not points:
             raise RuntimeError(f"map.json has no points at {src}")
-        if len(points) != len(self.projects):
-            raise RuntimeError(
-                f"map.json has {len(points)} points but corpus has {len(self.projects)}. "
-                "The map would pin the wrong projects. Rebuild with build.py."
-            )
+        by_slug = {str(pt.get("slug") or ""): pt for pt in points if pt and pt.get("slug")}
+        for p in self.projects:
+            rec = by_slug.get(p.slug)
+            if rec is not None:
+                rec["event"] = _family(p)
+                rec["title"] = str(p.title or rec.get("title") or "")
+                rec["year"] = int(p.year or rec.get("year") or 0)
+                rec["finalist"] = bool(p.finalist)
+                rec["tagline"] = str(p.tagline or rec.get("tagline") or "")
+        extra = [p for p in self.projects if p.slug not in by_slug]
+        if extra:
+            points.extend(self._project_extra_points(extra, by_slug))
+        xs = [float(pt.get("x") or 0) for pt in points]
+        ys = [float(pt.get("y") or 0) for pt in points]
+        payload["points"] = points
+        payload["bounds"] = _bounds(xs, ys) if xs else payload.get("bounds") or {}
         self.map_data = json_safe(payload)
+
+    def _project_extra_points(
+        self, extra: list[Project], known: dict[str, dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Drop extra events onto the HTN UMAP using a TF-IDF to (x, y) map."""
+        if not extra:
+            return []
+        if self.tfidf is None or self.vectorizer is None:
+            return [self._jitter_point(p) for p in extra]
+        index = {p.slug: i for i, p in enumerate(self.projects)}
+        rows: list[int] = []
+        xy: list[list[float]] = []
+        for slug, rec in known.items():
+            i = index.get(slug)
+            if i is None:
+                continue
+            try:
+                rows.append(i)
+                xy.append([float(rec["x"]), float(rec["y"])])
+            except (KeyError, TypeError, ValueError):
+                continue
+        if len(rows) < 20:
+            return [self._jitter_point(p) for p in extra]
+        try:
+            from sklearn.linear_model import Ridge
+
+            model = Ridge(alpha=10.0)
+            model.fit(self.tfidf[rows].toarray(), np.asarray(xy, dtype=float))
+            out: list[dict[str, Any]] = []
+            for p in extra:
+                i = index.get(p.slug)
+                if i is None:
+                    out.append(self._jitter_point(p))
+                    continue
+                pred = model.predict(self.tfidf[i].toarray())[0]
+                rec = _point_payload(p, float(pred[0]), float(pred[1]))
+                rec["placed"] = "tfidf"
+                out.append(rec)
+            print(f"projected {len(out)} extra-event projects onto the HTN map via TF-IDF")
+            return out
+        except Exception as extra_exc:
+            print(f"extra-event map projection skipped ({extra_exc})")
+            return [self._jitter_point(p) for p in extra]
+
+    def _jitter_point(self, project: Project) -> dict[str, Any]:
+        h = int(hashlib.md5(project.slug.encode()).hexdigest()[:8], 16) % 1000 / 1000.0
+        rec = _point_payload(project, (h - 0.5) * 0.8, (0.5 - h) * 0.8)
+        rec["placed"] = "jitter"
+        return rec
+
+    def available_events(self) -> list[dict[str, Any]]:
+        ok = np.asarray(self.emb_ok, dtype=bool) if self.emb_ok is not None else None
+        rows: list[dict[str, Any]] = []
+        present = {_family(p) for p in self.projects}
+        for name in EVENT_FAMILIES:
+            if name not in present:
+                continue
+            idxs = [i for i, p in enumerate(self.projects) if _family(p) == name]
+            n_emb = int(ok[idxs].sum()) if ok is not None and len(ok) == len(self.projects) else 0
+            rows.append(
+                {
+                    "name": name,
+                    "n": len(idxs),
+                    "n_labelled": sum(1 for i in idxs if self.projects[i].finalist),
+                    "n_embedded": n_emb,
+                    "space": "openai" if idxs and n_emb == len(idxs) else "tfidf",
+                    "default": name == DEFAULT_EVENT,
+                }
+            )
+        return rows
+
+    def normalize_events(self, events: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+        present = {_family(p) for p in self.projects}
+        wanted: list[str] = []
+        for raw in events or []:
+            name = str(raw or "").strip()
+            if name in present and name not in wanted:
+                wanted.append(name)
+        if wanted:
+            return tuple(wanted)
+        if DEFAULT_EVENT in present:
+            return (DEFAULT_EVENT,)
+        return tuple(name for name in EVENT_FAMILIES if name in present)
+
+    def _indices_for(self, events: list[str] | tuple[str, ...] | None) -> np.ndarray:
+        wanted = set(self.normalize_events(events))
+        idx = [i for i, p in enumerate(self.projects) if _family(p) in wanted]
+        return np.asarray(idx, dtype=int)
+
+    def _space_for(self, idx: np.ndarray) -> str:
+        if (
+            idx.size
+            and self.embeddings_norm is not None
+            and self.emb_ok is not None
+            and int(self.emb_ok.shape[0]) == len(self.projects)
+            and bool(np.asarray(self.emb_ok)[idx].all())
+        ):
+            return "openai"
+        return "tfidf"
+
+    def _mask_sims(
+        self, sims: np.ndarray, idx: np.ndarray | None = None, *, openai: bool = False
+    ) -> np.ndarray:
+        arr = np.asarray(sims, dtype=float).copy()
+        if arr.size != len(self.projects):
+            return arr
+        if openai and self.emb_ok is not None and int(self.emb_ok.shape[0]) == arr.size:
+            arr[~np.asarray(self.emb_ok, dtype=bool)] = -np.inf
+        if idx is not None:
+            keep = np.zeros(arr.size, dtype=bool)
+            keep[np.asarray(idx, dtype=int)] = True
+            arr[~keep] = -np.inf
+        return np.where(np.isfinite(arr), arr, -np.inf)
 
     def _load_model(self) -> None:
         src = model_path()
@@ -603,18 +809,26 @@ class Engine:
         if embed_space == "tfidf" or self.embeddings is None:
             if self.tfidf is None:
                 return np.array([], dtype=np.float64)
-            emb = self.tfidf.toarray()
+            idx = self._indices_for([DEFAULT_EVENT])
+            if idx.size == 0:
+                idx = np.arange(len(self.projects), dtype=int)
+            emb = self.tfidf[idx].toarray()
+            subset = [self.projects[int(i)] for i in idx]
         else:
-            emb = np.asarray(self.embeddings, dtype=float)
-        if emb.shape[0] != len(self.projects):
-            return np.array([], dtype=np.float64)
+            idx = self._indices_for([DEFAULT_EVENT])
+            if self.emb_ok is not None and int(self.emb_ok.shape[0]) == len(self.projects):
+                idx = idx[np.asarray(self.emb_ok)[idx]]
+            if idx.size == 0:
+                return np.array([], dtype=np.float64)
+            emb = np.nan_to_num(np.asarray(self.embeddings, dtype=float)[idx], nan=0.0)
+            subset = [self.projects[int(i)] for i in idx]
         try:
             reduced = pca.transform(emb)
-            struct = np.array([_structured_features(p) for p in self.projects], dtype=float)
+            struct = np.array([_structured_features(p) for p in subset], dtype=float)
             x = np.hstack([reduced, struct])
             return np.sort(_finalist_proba(clf, x))
-        except Exception as exc:
-            print(f"p_ref compute skipped ({exc})")
+        except Exception as extra:
+            print(f"p_ref compute skipped ({extra})")
             return np.array([], dtype=np.float64)
 
     def percentile_score(self, p: float) -> int:
@@ -718,18 +932,29 @@ class Engine:
                     "tagline": str(p.tagline or ""),
                     "finalist": bool(p.finalist),
                     "similarity": round(float(sim), 4),
+                    "event": _family(p),
                 }
             )
         return out
 
-    def _tfidf_neighbours(self, text: str, k: int = 5) -> tuple[list[tuple[str, float]], np.ndarray]:
+    def _tfidf_neighbours(
+        self, text: str, k: int = 5, idx: np.ndarray | None = None
+    ) -> tuple[list[tuple[str, float]], np.ndarray]:
         assert self.vectorizer is not None
         assert self.fallback_pca is not None
         assert self.fallback_coords is not None
         q = self.vectorizer.transform([text])
         sims = cosine_similarity(q, self.tfidf).ravel()
+        sims = self._mask_sims(sims, idx, openai=False)
+        finite = np.isfinite(sims) & (sims > -np.inf)
+        if not finite.any():
+            coords = self.fallback_pca.transform(q.toarray())[0]
+            if coords.shape[0] == 1:
+                coords = np.array([coords[0], 0.0])
+            return [], coords
+        k = max(1, min(int(k), int(finite.sum())))
         order = np.argsort(-sims)[:k]
-        pairs = [(self.projects[i].slug, float(sims[i])) for i in order]
+        pairs = [(self.projects[int(i)].slug, float(sims[int(i)])) for i in order]
         coords = self.fallback_pca.transform(q.toarray())[0]
         if coords.shape[0] == 1:
             coords = np.array([coords[0], 0.0])
@@ -749,15 +974,21 @@ class Engine:
         resp = client.embeddings.create(model="text-embedding-3-small", input=text[:8000])
         return np.array(resp.data[0].embedding, dtype=np.float32)
 
-    def _openai_neighbours(self, vec: np.ndarray, k: int = 5) -> list[tuple[str, float]]:
+    def _openai_neighbours(
+        self, vec: np.ndarray, k: int = 5, idx: np.ndarray | None = None
+    ) -> list[tuple[str, float]]:
         assert self.embeddings is not None
         a = vec / (np.linalg.norm(vec) + 1e-9)
         b = self.embeddings_norm
         if b is None:
-            b = self.embeddings / (np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-9)
-        sims = b @ a
+            b = self.embeddings / (np.linalg.norm(np.nan_to_num(self.embeddings), axis=1, keepdims=True) + 1e-9)
+        sims = self._mask_sims(b @ a, idx, openai=True)
+        finite = np.isfinite(sims) & (sims > -np.inf)
+        if not finite.any():
+            return []
+        k = max(1, min(int(k), int(finite.sum())))
         order = np.argsort(-sims)[:k]
-        return [(self.projects[i].slug, float(sims[i])) for i in order]
+        return [(self.projects[int(i)].slug, float(sims[int(i)])) for i in order]
 
     def _cosine_for_slugs(
         self, vec: np.ndarray | None, pairs: list[tuple[str, float]]
@@ -785,21 +1016,24 @@ class Engine:
             out.append((slug, sim))
         return out
 
-    def search(self, text: str, k: int = 400, min_sim: float = 0.2) -> dict[str, Any]:
-        """Cosine overlay. OpenAI space when embeddings.npy exists; else TF-IDF."""
+    def search(
+        self, text: str, k: int = 400, min_sim: float = 0.2, events: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Cosine overlay. OpenAI space when the selected events are fully embedded."""
         empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
         q = (text or "").strip()
         if not q:
             return json_safe(empty)
-        key = q.casefold()
+        families = self.normalize_events(events)
+        key = f"{'|'.join(families)}::{q.casefold()}"
         hit = self._search_cache.get(key)
         if hit is not None:
             self._search_cache.move_to_end(key)
             return json_safe(hit)
         try:
-            out = self._search_uncached(q, k=k, min_sim=min_sim)
-        except Exception as exc:
-            print(f"search failed ({exc})")
+            out = self._search_uncached(q, k=k, min_sim=min_sim, events=families)
+        except Exception as extra:
+            print(f"search failed ({extra})")
             out = empty
         if out.get("source") != "empty":
             self._search_cache[key] = out
@@ -807,17 +1041,22 @@ class Engine:
                 self._search_cache.popitem(last=False)
         return json_safe(out)
 
-    def _search_uncached(self, q: str, k: int, min_sim: float) -> dict[str, Any]:
+    def _search_uncached(
+        self, q: str, k: int, min_sim: float, events: tuple[str, ...] | None = None
+    ) -> dict[str, Any]:
         empty = {"matches": [], "max_sim": 0.0, "source": "empty", "n": 0}
+        idx = self._indices_for(events)
+        space = self._space_for(idx)
         if (
-            self._openai_configured()
+            space == "openai"
+            and self._openai_configured()
             and self.embeddings is not None
             and self.embeddings_norm is not None
         ):
             try:
                 vec = self._openai_embed(q, timeout=6.0)
                 a = vec / (np.linalg.norm(vec) + 1e-9)
-                sims = self.embeddings_norm @ a
+                sims = self._mask_sims(self.embeddings_norm @ a, idx, openai=True)
                 return self._pack_search(sims, source="openai", k=k, min_sim=min_sim)
             except Exception as extra:
                 print(f"search openai skipped ({extra})")
@@ -825,7 +1064,7 @@ class Engine:
             if self.vectorizer is None or self.tfidf is None:
                 return empty
             qv = self.vectorizer.transform([q])
-            sims = cosine_similarity(qv, self.tfidf).ravel()
+            sims = self._mask_sims(cosine_similarity(qv, self.tfidf).ravel(), idx, openai=False)
             return self._pack_search(sims, source="tfidf", k=k, min_sim=min_sim)
         except Exception as extra:
             print(f"search tfidf skipped ({extra})")
@@ -835,7 +1074,6 @@ class Engine:
         self, sims: np.ndarray, source: str, k: int, min_sim: float
     ) -> dict[str, Any]:
         arr = np.asarray(sims, dtype=float).ravel()
-        arr = np.where(np.isfinite(arr), arr, 0.0)
         if arr.size == 0:
             return {"matches": [], "max_sim": 0.0, "source": source, "n": 0}
         k = max(1, min(int(k), arr.size, 400))
@@ -844,8 +1082,8 @@ class Engine:
         max_sim = 0.0
         for i in order:
             s = float(arr[i])
-            if s < min_sim:
-                break
+            if not np.isfinite(s) or s < min_sim:
+                continue
             if len(matches) >= k:
                 break
             matches.append({"slug": str(self.projects[int(i)].slug), "sim": round(s, 4)})
@@ -1031,14 +1269,17 @@ class Engine:
                 print(f"context tfidf skipped ({extra})")
                 return []
         arr = np.asarray(sims, dtype=float).ravel()
-        arr = np.where(np.isfinite(arr), arr, 0.0)
+        arr = self._mask_sims(arr, openai=self.embeddings_norm is not None and sims is not None and arr.size == len(self.projects) and vec is not None)
         order = np.argsort(-arr)[:k]
         out: list[tuple[Project, float]] = []
         for i in order:
             idx = int(i)
             if idx < 0 or idx >= n:
                 continue
-            out.append((self.projects[idx], float(arr[idx])))
+            s = float(arr[idx])
+            if not np.isfinite(s):
+                continue
+            out.append((self.projects[idx], s))
         return out
 
     def _title_list(self) -> list[str]:
@@ -1185,7 +1426,13 @@ class Engine:
         except Exception:
             return None, json_safe(meta)
 
-    def ask(self, text: str, github: str = "", devpost: str = "") -> dict[str, Any]:
+    def ask(
+        self,
+        text: str,
+        github: str = "",
+        devpost: str = "",
+        events: list[str] | None = None,
+    ) -> dict[str, Any]:
         prompt = (text or "").strip()
         repo = None
         if github.strip():
@@ -1201,6 +1448,9 @@ class Engine:
             document = prompt
 
         signals = parse_signals(document, repo if repo and repo.get("ok") else None)
+        idx = self._indices_for(events)
+        space = self._space_for(idx)
+        allowed = {self.projects[int(i)].slug for i in idx}
 
         used = "tfidf"
         embed_vec = None
@@ -1213,28 +1463,41 @@ class Engine:
                 embed_vec = self._openai_embed(document, timeout=6.0)
                 xy = self._openai_point(embed_vec)
                 if xy is None and self.fallback_pca is not None:
-                    _, xy = self._tfidf_neighbours(document)
+                    _, xy = self._tfidf_neighbours(document, idx=idx)
                 point = {"x": float(xy[0]), "y": float(xy[1])}
                 used = "openai"
             except Exception:
                 used = "tfidf"
 
-        if used == "tfidf":
-            pairs, xy = self._tfidf_neighbours(document)
+        if used == "tfidf" or space != "openai":
+            pairs, xy = self._tfidf_neighbours(document, idx=idx)
             point = {"x": float(xy[0]), "y": float(xy[1])}
-            embed_vec = None
+            if used != "openai":
+                embed_vec = None
             source = "tfidf"
             print("neighbours source=tfidf")
         else:
             try:
-                pairs = self.es_neighbours(embed_vec, document, k=5)
+                pairs = self.es_neighbours(embed_vec, document, k=12)
+                pairs = [(slug, score) for slug, score in pairs if slug in allowed][:5]
+                if len(pairs) < 5:
+                    extra = self._openai_neighbours(embed_vec, k=5, idx=idx)
+                    seen = {slug for slug, _ in pairs}
+                    for slug, score in extra:
+                        if slug in seen:
+                            continue
+                        pairs.append((slug, score))
+                        seen.add(slug)
+                        if len(pairs) >= 5:
+                            break
                 pairs = self._cosine_for_slugs(embed_vec, pairs)
                 source = "elastic"
                 print("neighbours source=elastic")
-            except Exception as exc:
-                pairs = self._openai_neighbours(embed_vec)
+            except Exception as extra:
+                pairs = self._openai_neighbours(embed_vec, k=5, idx=idx)
                 source = "local"
-                print(f"neighbours source=local ({exc})")
+                print(f"neighbours source=local ({extra})")
+
 
         if embed_vec is None and self.model_blob and self.model_blob.get("embed_space") == "tfidf":
             assert self.vectorizer is not None
@@ -1242,8 +1505,9 @@ class Engine:
 
         n = max(1, len(self.projects))
         clf_prob, model_meta = self._probability(embed_vec, signals)
-        signal_prob, why = score_from_signals(self.projects, signals)
-        if n >= 80 and clf_prob is not None:
+        htn = [self.projects[int(i)] for i in self._indices_for([DEFAULT_EVENT])] or self.projects
+        signal_prob, why = score_from_signals(htn, signals)
+        if len(htn) >= 80 and clf_prob is not None:
             prob = 0.7 * float(clf_prob) + 0.3 * signal_prob
             why = ["classifier on stack/hardware signals + text"] + why
         else:
@@ -1339,6 +1603,7 @@ class Engine:
                     "tags": [str(t) for t in (signals.get("tags") or [])[:8]],
                 },
                 "tracks": tracks_out,
+                "events": list(self.normalize_events(events)),
             }
         )
 

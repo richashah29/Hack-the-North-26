@@ -72,9 +72,21 @@
   // Search halos: not red, not blue, not white. Distinct from the base encoding.
   const SEARCH_PALETTE = ["#D4A017", "#2E8B57", "#8E44AD", "#1A9B8A", "#C47A0A"];
   const HALO_ALPHA_CAP = 0.28;
-  const YEAR_MIN = 2014;
-  const YEAR_MAX = 2025;
+  const YEAR_MIN_DEFAULT = 2014;
+  const YEAR_MAX_DEFAULT = 2025;
+  let YEAR_MIN = YEAR_MIN_DEFAULT;
+  let YEAR_MAX = YEAR_MAX_DEFAULT;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EVENT_SHORT = {
+    "Hack the North": "HTN",
+    "UofTHacks": "UofTHacks",
+    "GenAI Genesis": "GenAI",
+  };
+  const eventToggles = document.getElementById("event-toggles");
+  const eventTogglesRow = document.getElementById("event-toggles-row");
+  const eventTogglesNote = document.getElementById("event-toggles-note");
+  let eventCatalog = [];
+  let selectedEvents = new Set(["Hack the North"]);
 
   let mapData = { points: [], bounds: { x0: -1, y0: -1, x1: 1, y1: 1 } };
   let pointBySlug = new Map();
@@ -201,8 +213,26 @@
     return Number(p.year) <= yearCap;
   }
 
+  function inSelectedEvent(p) {
+    const ev = p.event || "Hack the North";
+    if (!selectedEvents.size) return true;
+    return selectedEvents.has(ev);
+  }
+
+  function selectedEventList() {
+    const names = eventCatalog.length
+      ? eventCatalog.map((e) => e.name)
+      : ["Hack the North"];
+    const picked = names.filter((n) => selectedEvents.has(n));
+    return picked.length ? picked : names.slice(0, 1);
+  }
+
+  function withEvents(body) {
+    return Object.assign({}, body || {}, { events: selectedEventList() });
+  }
+
   function visiblePoints() {
-    return (mapData.points || []).filter(inYear);
+    return (mapData.points || []).filter(inYear).filter(inSelectedEvent);
   }
 
   function hitTest(mx, my) {
@@ -373,7 +403,7 @@
       ctx.lineWidth = 1;
       for (const n of query.neighbours || []) {
         const p = pointBySlug.get(n.slug) || (mapData.points || []).find((x) => x.slug === n.slug);
-        if (!p || !inYear(p)) continue;
+        if (!p || !inYear(p) || !inSelectedEvent(p)) continue;
         const t = project(p);
         ctx.beginPath();
         ctx.moveTo(origin.x, origin.y);
@@ -397,7 +427,7 @@
           if (!m || seen.has(m.slug)) continue;
           seen.add(m.slug);
           const p = pointBySlug.get(m.slug);
-          if (!p || !inYear(p)) continue;
+          if (!p || !inYear(p) || !inSelectedEvent(p)) continue;
           const s = project(p);
           if (!onScreen(s)) continue;
           const sim = Number(m.sim);
@@ -501,10 +531,13 @@
     if (p.you) {
       tooltip.innerHTML = `<div class="tip-title">${p.preview ? "Preview idea" : "Your idea"}</div>`;
     } else {
-      const badge = p.finalist ? `<span class="tip-badge">Finalist</span>` : "";
+      const badge = p.finalist
+        ? `<span class="tip-badge">${p.event && p.event !== "Hack the North" ? "Winner" : "Finalist"}</span>`
+        : "";
       const hint = devpostUrl(p) ? `<div class="tip-open">Open on Devpost</div>` : "";
+      const eventBit = p.event ? `<span>${escapeHtml(p.event)}</span>` : "";
       tooltip.innerHTML = `<div class="tip-title">${escapeHtml(p.title || "")}</div>
-        <div class="tip-meta"><span>${escapeHtml(String(p.year || ""))}</span>${badge}</div>${hint}`;
+        <div class="tip-meta"><span>${escapeHtml(String(p.year || ""))}</span>${eventBit}${badge}</div>${hint}`;
     }
     const rect = canvas.getBoundingClientRect();
     tooltip.style.left = `${ev.clientX - rect.left}px`;
@@ -676,6 +709,7 @@
   function setCursorBusy(on) {
     cursorBusy += on ? 1 : -1;
     if (cursorBusy < 0) cursorBusy = 0;
+    document.documentElement.classList.toggle("is-cursor-busy", cursorBusy > 0);
     if (!cursorMoose) return;
     cursorMoose.hidden = cursorBusy === 0;
     if (cursorBusy > 0) placeCursorMoose();
@@ -791,8 +825,8 @@
           <span class="card-year">${escapeHtml(year)}</span>
         </div>
         <p class="card-tag">${escapeHtml(tagline)}</p>
-        ${n.finalist ? '<div class="badge">Finalist</div>' : ""}
-        ${sim ? `<div class="twin-meta">${escapeHtml(sim)}</div>` : ""}
+        ${n.finalist ? `<div class="badge">${n.event && n.event !== "Hack the North" ? "Winner" : "Finalist"}</div>` : ""}
+        ${sim ? `<div class="twin-meta">${escapeHtml(sim)}${n.event && n.event !== "Hack the North" ? ` · ${escapeHtml(n.event)}` : ""}</div>` : ""}
       `;
       setDevpostTarget(li, n);
       neighbourList.appendChild(li);
@@ -990,7 +1024,7 @@
       const res = await fetch("/api/coach/stack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(withEvents(body)),
         signal: ac.signal,
       });
       if (!res.ok) throw new Error(await res.text());
@@ -1219,7 +1253,7 @@
         const res = await fetch("/api/coach", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify(withEvents(body)),
         });
         if (!res.ok) throw new Error(await res.text());
         if (coachStatus) coachStatus.classList.remove("is-loading");
@@ -1380,7 +1414,7 @@
   }
 
   function finalistsThrough(cap) {
-    return (mapData.points || []).filter((p) => p.finalist && (cap == null || Number(p.year) <= cap)).length;
+    return (mapData.points || []).filter((p) => inSelectedEvent(p) && p.finalist && (cap == null || Number(p.year) <= cap)).length;
   }
 
   function stopPlay() {
@@ -1394,15 +1428,33 @@
     }
   }
 
+  function syncYearRange() {
+    const years = (mapData.points || [])
+      .filter(inSelectedEvent)
+      .map((p) => Number(p.year))
+      .filter((y) => Number.isFinite(y) && y >= 2014);
+    YEAR_MIN = years.length ? Math.min(...years) : YEAR_MIN_DEFAULT;
+    YEAR_MAX = years.length ? Math.max(...years) : YEAR_MAX_DEFAULT;
+    if (scrubYear) {
+      scrubYear.min = String(YEAR_MIN);
+      scrubYear.max = String(YEAR_MAX);
+    }
+  }
+
   function updateScrubber() {
     const all = yearCap == null;
     const label = all ? "All years" : String(yearCap);
     const nFin = finalistsThrough(yearCap);
-    if (yearHudNum) yearHudNum.textContent = all ? "2014-2025" : String(yearCap);
+    const nPts = (mapData.points || []).filter(inSelectedEvent).filter((p) => all || Number(p.year) <= yearCap).length;
+    if (yearHudNum) {
+      yearHudNum.textContent = all
+        ? (YEAR_MIN === YEAR_MAX ? String(YEAR_MIN) : `${YEAR_MIN}-${YEAR_MAX}`)
+        : String(yearCap);
+    }
     if (yearHudSub) {
       yearHudSub.textContent = all
-        ? `${fmtN(nFin)} finalists`
-        : `${fmtN(nFin)} finalists so far`;
+        ? `${fmtN(nPts)} projects · ${fmtN(nFin)} labelled`
+        : `${fmtN(nFin)} labelled so far`;
     }
     if (scrubYearLabel) scrubYearLabel.textContent = label;
     if (scrubFinalists) {
@@ -1412,6 +1464,66 @@
     }
     if (scrubYear && !all) scrubYear.value = String(yearCap);
     if (scrubYear && all) scrubYear.value = String(YEAR_MAX);
+  }
+
+  function eventChipLabel(name) {
+    return EVENT_SHORT[name] || name;
+  }
+
+  function renderEventNote() {
+    if (!eventTogglesNote) return;
+    const weak = eventCatalog.filter((e) => selectedEvents.has(e.name) && e.space !== "openai");
+    if (!weak.length) {
+      eventTogglesNote.hidden = true;
+      eventTogglesNote.textContent = "";
+      return;
+    }
+    eventTogglesNote.hidden = false;
+    eventTogglesNote.textContent = weak.length === 1
+      ? `${weak[0].name} uses local text likeness until those writeups are in the shared embedding cache.`
+      : `${weak.map((e) => e.name).join(" and ")} use local text likeness until those writeups are in the shared embedding cache.`;
+  }
+
+  function renderEventToggles() {
+    if (!eventToggles || !eventTogglesRow) return;
+    if (eventCatalog.length < 2) {
+      eventToggles.hidden = true;
+      eventTogglesRow.innerHTML = "";
+      return;
+    }
+    eventToggles.hidden = false;
+    eventTogglesRow.innerHTML = "";
+    for (const ev of eventCatalog) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "event-chip" + (selectedEvents.has(ev.name) ? " is-on" : "");
+      btn.setAttribute("aria-pressed", selectedEvents.has(ev.name) ? "true" : "false");
+      btn.setAttribute("aria-label", `${ev.name}, ${fmtN(ev.n)} projects`);
+      btn.textContent = eventChipLabel(ev.name);
+      btn.addEventListener("click", () => toggleEvent(ev.name));
+      eventTogglesRow.appendChild(btn);
+    }
+    renderEventNote();
+  }
+
+  function toggleEvent(name) {
+    if (selectedEvents.has(name)) {
+      if (selectedEvents.size <= 1) return;
+      selectedEvents.delete(name);
+    } else {
+      selectedEvents.add(name);
+    }
+    renderEventToggles();
+    applyEventFilter();
+  }
+
+  function applyEventFilter() {
+    syncYearRange();
+    updateScrubber();
+    draw();
+    if (lastIdeaText && form && !askInFlight) {
+      form.requestSubmit();
+    }
   }
 
   function setYearCap(y, playing) {
@@ -1485,7 +1597,7 @@
         const res = await fetch("/api/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(withEvents({ text })),
         });
         let data = {};
         try {
@@ -1552,6 +1664,7 @@
     }
     askInFlight = true;
     askBtn.disabled = true;
+    setCursorBusy(true);
     setNeighbourLoader("spin");
     if (askStatus) {
       askStatus.hidden = false;
@@ -1568,7 +1681,7 @@
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, github, devpost }),
+        body: JSON.stringify(withEvents({ text, github, devpost })),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -1641,6 +1754,7 @@
     } finally {
       askInFlight = false;
       askBtn.disabled = false;
+      setCursorBusy(false);
     }
   });
 
@@ -1853,7 +1967,7 @@
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: idea, github: "", devpost: "" }),
+        body: JSON.stringify(withEvents({ text: idea, github: "", devpost: "" })),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -2315,8 +2429,15 @@
       }
       indexMapPoints();
       const cfg = await cfgRes.json();
+      eventCatalog = Array.isArray(cfg.events) ? cfg.events : [];
+      if (eventCatalog.length) {
+        selectedEvents = new Set(eventCatalog.filter((e) => e.default).map((e) => e.name));
+        if (!selectedEvents.size) selectedEvents = new Set([eventCatalog[0].name]);
+      }
+      renderEventToggles();
+      syncYearRange();
       if (corpusMeta) {
-        corpusMeta.textContent = `${fmtN(cfg.n)} projects  ·  ${fmtN(cfg.n_finalists)} finalists  ·  ${cfg.source || "corpus"}`;
+        corpusMeta.textContent = `${fmtN(cfg.n)} projects  ·  ${fmtN(cfg.n_finalists)} labelled  ·  ${cfg.source || "corpus"}`;
       }
       updateScrubber();
       updateZoomUi();
