@@ -12,3 +12,5 @@ data/model.pkl
 data/phase_*.log
 *.egg-info/
 .sentry-native/
+data/*_server.log
+data/failed_slugs.json

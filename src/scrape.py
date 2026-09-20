@@ -1,15 +1,18 @@
 """Step 3: crawl.
 
-Phase A walks each year's gallery to collect slugs (and the free metadata the
+Phase A walks each edition's gallery to collect slugs (and the free metadata the
 gallery already gives us). Phase B fetches every project page. Everything lands
 in raw/ via the cache, so this is safe to interrupt and restart.
+
+Driven by the registry in events.py, so adding a hackathon is a registry edit.
 """
 import json
 import sys
 
 from bs4 import BeautifulSoup
 
-from fetch import ROOT, YEARS, fetch
+from events import EVENTS
+from fetch import ROOT, fetch
 
 SLUGS_JSON = ROOT / "data" / "slugs.json"
 
@@ -38,24 +41,31 @@ def gallery_items(html):
 def phase_a():
     """Walk galleries until a page adds nothing new."""
     all_items = {}  # slug -> record
-    for year, base in YEARS.items():
+    for ev in EVENTS:
         seen = set()
         for page in range(1, 60):
             try:
-                html = fetch(f"{base}/project-gallery?page={page}")
+                html = fetch(f"{ev.base_url}/project-gallery?page={page}")
             except Exception as e:
-                print(f"  {year} page {page} ERR {e}", flush=True)
+                print(f"  {ev.event_id} page {page} ERR {e}", flush=True)
                 break
             new = [it for it in gallery_items(html) if it["slug"] not in seen]
             if not new:
                 break
             for it in new:
                 seen.add(it["slug"])
-                # First year to claim a slug wins; a project is submitted once.
+                # First edition to claim a slug wins; a project is submitted once.
+                # The project page's own "Submitted to" block is authoritative and
+                # overrides this in parse.py.
                 if it["slug"] not in all_items:
-                    all_items[it["slug"]] = {**it, "year": year}
-            print(f"  {year} page {page} +{len(new)}", flush=True)
-        print(f"== {year}: {len(seen)} projects", flush=True)
+                    all_items[it["slug"]] = {
+                        **it,
+                        "year": ev.year,
+                        "event": ev.event,
+                        "event_id": ev.event_id,
+                    }
+            print(f"  {ev.event_id} page {page} +{len(new)}", flush=True)
+        print(f"== {ev.event_id}: {len(seen)} projects", flush=True)
 
     SLUGS_JSON.parent.mkdir(exist_ok=True)
     SLUGS_JSON.write_text(json.dumps(all_items, indent=1))

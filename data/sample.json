@@ -2,6 +2,8 @@
  {
   "slug":"botscape",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/botscape",
   "museum_url":"https:\/\/museum.hackthenorth.com\/botscape",
   "title":"Botscape",
@@ -29,6 +31,7 @@
   "has_video":true,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -38,6 +41,8 @@
  {
   "slug":"flock",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/flock",
   "museum_url":"https:\/\/museum.hackthenorth.com\/flock",
   "title":"Flock",
@@ -65,6 +70,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -74,6 +80,8 @@
  {
   "slug":"guava",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/guava",
   "museum_url":"https:\/\/museum.hackthenorth.com\/guava",
   "title":"Guava",
@@ -106,6 +114,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -115,6 +124,8 @@
  {
   "slug":"lend",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/lend",
   "museum_url":"https:\/\/museum.hackthenorth.com\/lend",
   "title":"Lend",
@@ -154,6 +165,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -163,6 +175,8 @@
  {
   "slug":"open-pokemon",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/open-pokemon",
   "museum_url":"https:\/\/museum.hackthenorth.com\/open-pokemon",
   "title":"Open Pok\u00e9mon",
@@ -192,6 +206,7 @@
   "has_video":true,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -201,6 +216,8 @@
  {
   "slug":"pinpnt-me",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/pinpnt-me",
   "museum_url":"https:\/\/museum.hackthenorth.com\/pinpnt-me",
   "title":"pinpnt.me",
@@ -228,6 +245,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -237,6 +255,8 @@
  {
   "slug":"rememberalll",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/rememberalll",
   "museum_url":"https:\/\/museum.hackthenorth.com\/rememberalll",
   "title":"RememberAlll",
@@ -272,6 +292,7 @@
   "has_video":false,
   "has_repo":true,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Thiel Foundation",
    "Winner"
@@ -282,6 +303,8 @@
  {
   "slug":"signlang",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/signlang",
   "museum_url":"https:\/\/museum.hackthenorth.com\/signlang",
   "title":"SignLang",
@@ -311,6 +334,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Leap Motion API",
    "Winner"
@@ -321,6 +345,8 @@
  {
   "slug":"silicon-man",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/silicon-man",
   "museum_url":"https:\/\/museum.hackthenorth.com\/silicon-man",
   "title":"Silicon Man",
@@ -347,6 +373,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Winner"
   ],
@@ -356,6 +383,8 @@
  {
   "slug":"spacebowl-oculus-myo",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/spacebowl-oculus-myo",
   "museum_url":"https:\/\/museum.hackthenorth.com\/spacebowl-oculus-myo",
   "title":"Spacebowl",
@@ -382,6 +411,7 @@
   "has_video":false,
   "has_repo":true,
   "finalist":true,
+  "won_prize":true,
   "prizes":[
    "Backtrack API",
    "Winner"
@@ -392,6 +422,8 @@
  {
   "slug":"25-arduino-syringe-pump",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/25-arduino-syringe-pump",
   "museum_url":"",
   "title":"25$ Arduino Syringe Pump",
@@ -414,6 +446,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -423,6 +456,8 @@
  {
   "slug":"3d-chai-crystals-augmented-reality",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/3d-chai-crystals-augmented-reality",
   "museum_url":"",
   "title":"3D Chai Crystals: Augmented Reality",
@@ -449,6 +484,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -458,6 +494,8 @@
  {
   "slug":"a-day-in",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/a-day-in",
   "museum_url":"",
   "title":"A day in ...",
@@ -493,6 +531,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":true,
   "prizes":[
    "Yelp API"
   ],
@@ -502,6 +541,8 @@
  {
   "slug":"afar-advanced-first-aid-response-system",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/afar-advanced-first-aid-response-system",
   "museum_url":"",
   "title":"AFAR (Advanced First Aid Response System)",
@@ -534,6 +575,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -543,6 +585,8 @@
  {
   "slug":"alertr",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/alertr",
   "museum_url":"",
   "title":"Alertr",
@@ -568,6 +612,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -577,6 +622,8 @@
  {
   "slug":"alternis-p99uk",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/alternis-p99uk",
   "museum_url":"",
   "title":"alternis.",
@@ -606,6 +653,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -615,6 +663,8 @@
  {
   "slug":"amethyst",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/amethyst",
   "museum_url":"",
   "title":"Amethyst",
@@ -641,6 +691,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -650,6 +701,8 @@
  {
   "slug":"arm-band",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/arm-band",
   "museum_url":"",
   "title":"ARM-band",
@@ -674,6 +727,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -683,6 +737,8 @@
  {
   "slug":"attack-parrot",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/attack-parrot",
   "museum_url":"",
   "title":"Attack Parrot",
@@ -709,6 +765,7 @@
   "has_video":false,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],
@@ -718,6 +775,8 @@
  {
   "slug":"backsafe-oggza",
   "year":2014,
+  "event":"Hack the North",
+  "event_id":"htn-2014",
   "url":"https:\/\/devpost.com\/software\/backsafe-oggza",
   "museum_url":"",
   "title":"BackSafe",
@@ -752,6 +811,7 @@
   "has_video":true,
   "has_repo":false,
   "finalist":false,
+  "won_prize":false,
   "prizes":[
 
   ],

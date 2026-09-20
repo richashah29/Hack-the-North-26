@@ -1,4 +1,4 @@
-# Prior Art
+# Win the North
 
 Every Hack the North project since 2014, in one searchable pile. Type in an idea
 and find out whether someone already built it, and whether they made the top 12.
@@ -36,6 +36,17 @@ and that's the interesting part.
   problem" framing: 5.4%. That gap is well inside the error bars so we're not
   claiming jokes win, but the usual "make it useful" advice doesn't show up
   anywhere in the data.
+
+## Beyond Hack the North
+
+HTN on its own is the default. We also scraped **UofTHacks** (8 editions) and **GenAI
+Genesis** (3), so you can ask the same question against a wider Toronto field — 4,680
+projects instead of 3,443. Point `CORPUS_PATH` at `data/corpus_multi.parquet` to use it.
+
+Worth knowing the two pools measure slightly different things. HTN publishes a museum of
+its finalists, so there we know the real top ~12 each year. Nobody else does, so
+elsewhere the only signal is the Devpost prize badge, which includes sponsor tracks. The
+`won_prize` column means the same thing everywhere if you want to compare fairly.
 
 The full dataset and how we built it is in [DATASET.md](DATASET.md).
 
@@ -79,8 +90,3 @@ To rebuild the corpus itself from scratch, that's `src/scrape.py` then
 `/api/ask` uses OpenAI `text-embedding-3-small` when a key is present and
 embeddings are on disk. If that call fails or times out (10s), neighbours come from
 a local TF-IDF index instead of a 500.
-
-## Who did what
-
-Sara built the app ([SPEC.md](SPEC.md)). Richa built the corpus
-([RICHA.md](RICHA.md)). The join key is `slug`.

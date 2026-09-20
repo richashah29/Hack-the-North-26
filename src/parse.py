@@ -1,7 +1,9 @@
 """Step 4: parse cached project HTML into corpus rows."""
-import re
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
+
+from events import event_for_host
 
 # Devpost's README template, in I/we variants. Map a heading onto a stable key.
 SECTION_KEYS = [
@@ -14,9 +16,6 @@ SECTION_KEYS = [
     ("sec_whats_next",      ("what's next", "whats next", "what is next")),
 ]
 
-HTN_HOST = re.compile(r"hackthenorth(\d{4})?\.devpost\.com")
-
-
 def _section_key(heading: str):
     h = heading.lower().strip()
     for key, needles in SECTION_KEYS:
@@ -26,12 +25,18 @@ def _section_key(heading: str):
 
 
 def _submissions(soup):
-    """Return (htn_year, htn_prizes, all_prizes) from the 'Submitted to' block."""
-    htn_year, htn_prizes, all_prizes = None, [], []
+    """Read the 'Submitted to' block.
+
+    A project can be submitted to several hackathons; we only care about the ones
+    in our registry. Returns (event, prizes) for the first registered edition
+    found, which is authoritative over whichever gallery we happened to see the
+    project in.
+    """
+    event, event_prizes = None, []
     for block in soup.select("#submissions .software-list-content"):
         link = block.select_one("p a[href]")
         href = link.get("href", "") if link else ""
-        m = HTN_HOST.search(href)
+        ev = event_for_host(urlparse(href).netloc) if href else None
         prizes = []
         for li in block.select("ul.no-bullet li"):
             # The <li> is "<span class=winner>Winner</span> <prize name>"
@@ -41,15 +46,15 @@ def _submissions(soup):
             name = li.get_text(" ", strip=True)
             if name:
                 prizes.append(name)
-        all_prizes += prizes
-        if m:
-            # hackthenorth.devpost.com (no digits) is the 2014 edition.
-            htn_year = int(m.group(1)) if m.group(1) else 2014
-            htn_prizes += prizes
-    return htn_year, htn_prizes, all_prizes
+        if ev and event is None:
+            event = ev
+            event_prizes = prizes
+    return event, event_prizes
 
 
-def parse(html: str, slug: str, gallery_year: int) -> dict:
+def parse(html: str, slug: str, gallery_meta: dict) -> dict:
+    """gallery_meta carries the edition we found this project under, as a fallback
+    for when the project page's own 'Submitted to' block is unreadable."""
     s = BeautifulSoup(html, "lxml")
 
     def txt(sel):
@@ -64,7 +69,7 @@ def parse(html: str, slug: str, gallery_year: int) -> dict:
     team = s.select(".software-team-member") or s.select("#app-team li")
     hrefs = [a.get("href") or "" for a in s.select("a")]
     has_video = bool(s.select_one('iframe[src*="youtube"], iframe[src*="vimeo"]'))
-    htn_year, htn_prizes, _ = _submissions(s)
+    event, prizes = _submissions(s)
 
     body_el = s.select_one("#app-details-left")
     if body_el:
@@ -85,9 +90,12 @@ def parse(html: str, slug: str, gallery_year: int) -> dict:
                 sections[cur] += node.get_text(" ", strip=True) + "\n"
     sections = {k: v.strip() for k, v in sections.items()}
 
+    gallery_year = gallery_meta.get("year")
     return {
         "slug": slug,
-        "year": htn_year or gallery_year,
+        "year": event.year if event else gallery_year,
+        "event": event.event if event else gallery_meta.get("event", ""),
+        "event_id": event.event_id if event else gallery_meta.get("event_id", ""),
         "url": f"https://devpost.com/software/{slug}",
         "title": txt("#app-title") or txt("h1"),
         "tagline": txt("#software-header p.large") or txt("p.large"),
@@ -99,9 +107,12 @@ def parse(html: str, slug: str, gallery_year: int) -> dict:
         "desc_words": len(description.split()),
         "has_video": has_video,
         "has_repo": any("github.com" in h for h in hrefs),
-        "prizes": htn_prizes,
-        "n_prizes": len(htn_prizes),
+        "prizes": prizes,
+        "n_prizes": len(prizes),
+        # Won anything at all. Comparable across events, unlike `finalist`, which
+        # for HTN means the museum's top ~12 and elsewhere means any prize.
+        "won_prize": len(prizes) > 0,
         # Devpost's own view of finalist status; reconciled with the museum in build.py
-        "_finalist_devpost": any("finalist" in p.lower() for p in htn_prizes),
+        "_finalist_devpost": any("finalist" in p.lower() for p in prizes),
         "_gallery_year": gallery_year,
     }
