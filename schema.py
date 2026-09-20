@@ -164,6 +164,9 @@ class Project:
     has_repo: bool = False
     prizes: list[str] = field(default_factory=list)
     finalist: bool = False
+    won_prize: bool = False
+    event: str = ""
+    event_id: str = ""
 
     def embed_text(self) -> str:
         desc = (self.description or "")[:4000]
@@ -232,7 +235,26 @@ def project_from_row(row: dict[str, Any]) -> Project:
         has_repo=_as_bool(row.get("has_repo")),
         prizes=[str(x) for x in _as_list(row.get("prizes"))],
         finalist=_as_bool(row.get("finalist")),
+        won_prize=_as_bool(row.get("won_prize")),
+        event=str(row.get("event") or ""),
+        event_id=str(row.get("event_id") or ""),
     )
+
+
+def load_explore_corpus() -> list[Project]:
+    """Load the widest corpus the map can toggle, without flipping CORPUS_PATH.
+
+    CORPUS_PATH still wins when set. Otherwise corpus_multi.parquet is preferred
+    so Explore can filter Hack the North / UofTHacks / GenAI Genesis. The HTN-only
+    parquet stays the default when the multi file is missing.
+    """
+    env = (os.environ.get("CORPUS_PATH") or "").strip()
+    if env:
+        return load_corpus()
+    multi = ROOT / MULTI_CORPUS_PATH
+    if multi.exists():
+        return load_corpus(multi)
+    return load_corpus()
 
 
 def load_corpus(path: str | Path | None = None) -> list[Project]:

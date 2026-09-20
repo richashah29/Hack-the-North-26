@@ -26,7 +26,7 @@ from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from engine import DATA, EMB_PATH, MAP_PATH, MODEL_PATH, _bounds, _point_payload, _structured_features
+from engine import DATA, EMB_PATH, MAP_PATH, MODEL_PATH, _bounds, _finalist_proba, _point_payload, _structured_features
 from schema import load_corpus
 
 load_dotenv()
@@ -415,6 +415,7 @@ def train(projects, embeddings: np.ndarray):
         "n_finalists": int(y.sum()),
         "winner": winner_name,
         "embed_space": "openai_or_tfidf",
+        "p_ref": np.sort(_finalist_proba(model, x)),
     }
     return blob
 
@@ -435,7 +436,7 @@ def main() -> int:
     blob = train(projects, embeddings)
     blob["reducer"] = reducer
     joblib.dump(blob, MODEL_PATH)
-    print(f"Wrote {MODEL_PATH}  auc={blob['auc']} spread={blob['auc_spread']}")
+    print(f"Wrote {MODEL_PATH}  auc={blob['auc']} spread={blob['auc_spread']} p_ref={len(blob['p_ref'])}")
     return 0
 
 

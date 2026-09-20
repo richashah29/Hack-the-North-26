@@ -3,39 +3,132 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Prior Art</title>
+  <title>Win the North</title>
+  <link rel="icon" href="/web/favicon.ico" sizes="32x32" />
+  <link rel="icon" type="image/png" href="/web/favicon.png?v=1" sizes="64x64" />
+  <link rel="apple-touch-icon" href="/web/apple-touch-icon.png?v=1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/web/style.css?v=28" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/web/style.css?v=73" />
 </head>
 <body>
+  <div class="campsite" aria-hidden="true">
+    <svg class="campsite-svg campsite-sky" viewBox="0 0 1440 240" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax slice">
+      <defs>
+        <linearGradient id="htnSky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#B8E8F2" />
+          <stop offset="72%" stop-color="#D5EFE4" />
+          <stop offset="100%" stop-color="#E8D4B8" />
+        </linearGradient>
+      </defs>
+      <rect width="1440" height="240" fill="url(#htnSky)" />
+    </svg>
+    <div class="sky-clouds">
+      <img class="cloud cloud-1" src="/web/cloud-c.png" alt="" />
+      <img class="cloud cloud-2" src="/web/cloud-a.png" alt="" />
+      <img class="cloud cloud-3" src="/web/cloud-b.png" alt="" />
+      <img class="cloud cloud-4" src="/web/cloud-c.png" alt="" />
+      <img class="cloud cloud-5" src="/web/cloud-a.png" alt="" />
+      <img class="cloud cloud-6" src="/web/cloud-b.png" alt="" />
+      <img class="cloud cloud-7" src="/web/cloud-c.png" alt="" />
+    </div>
+    <svg class="campsite-svg campsite-peaks" viewBox="0 0 1440 240" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax slice">
+      <path fill="#3D9B96" d="M0 148 L90 92 L170 138 L255 68 L350 128 L430 82 L525 142 L610 94 L705 148 L790 78 L885 136 L980 72 L1095 142 L1200 86 L1315 138 L1440 70 L1440 178 L0 178 Z" />
+      <g class="snow-far" fill="#F6F2EA">
+        <path d="M63.0 108.8 L90.0 92.0 L114.0 105.8 L97.7 107.3 L79.3 112.3 Z" />
+        <path d="M229.5 89.0 L255.0 68.0 L283.5 86.0 L266.2 85.5 L246.8 91.5 Z" />
+        <path d="M406.0 95.8 L430.0 82.0 L458.5 100.0 L441.7 99.2 L422.8 102.6 Z" />
+        <path d="M584.5 108.4 L610.0 94.0 L638.5 110.2 L621.2 108.1 L601.8 113.5 Z" />
+        <path d="M764.5 99.0 L790.0 78.0 L818.5 95.4 L801.2 97.1 L781.8 101.3 Z" />
+        <path d="M951.5 91.2 L980.0 72.0 L1014.5 93.0 L994.3 90.9 L971.7 97.3 Z" />
+        <path d="M1168.5 102.8 L1200.0 86.0 L1234.5 101.6 L1213.4 102.5 L1189.6 106.9 Z" />
+        <path d="M1402.5 90.4 L1440.0 70.0 L1464.0 91.0 L1444.3 89.3 L1422.2 94.1 Z" />
+      </g>
+      <path fill="#2F7A76" d="M0 172 L28 132 L56 172 L84 124 L112 172 L148 118 L184 172 L220 128 L256 172 L300 110 L344 172 L388 122 L432 172 L480 108 L528 172 L572 126 L616 172 L668 112 L720 172 L764 120 L808 172 L860 108 L912 172 L956 125 L1000 172 L1052 112 L1104 172 L1148 118 L1192 172 L1244 110 L1296 172 L1340 124 L1384 172 L1416 116 L1440 172 L1440 240 L0 240 Z" />
+      <g class="snow-near" fill="#F3EEE4">
+        <path d="M76.8 136.3 L84.0 124.0 L91.2 136.3 L86.6 137.3 L81.4 138.8 Z" />
+        <path d="M138.6 132.0 L148.0 118.0 L157.4 132.0 L151.4 131.0 L144.6 136.5 Z" />
+        <path d="M288.6 126.1 L300.0 110.0 L311.4 126.1 L304.1 127.1 L295.9 128.6 Z" />
+        <path d="M376.6 135.0 L388.0 122.0 L399.4 135.0 L392.1 134.0 L383.9 139.5 Z" />
+        <path d="M467.5 124.6 L480.0 108.0 L492.5 124.6 L484.5 124.6 L475.5 128.1 Z" />
+        <path d="M654.5 127.6 L668.0 112.0 L681.5 127.6 L672.9 126.6 L663.1 132.1 Z" />
+        <path d="M752.6 133.5 L764.0 120.0 L775.4 133.5 L768.1 133.5 L759.9 137.0 Z" />
+        <path d="M846.5 124.6 L860.0 108.0 L873.5 124.6 L864.9 125.6 L855.1 127.1 Z" />
+        <path d="M1038.5 127.6 L1052.0 112.0 L1065.5 127.6 L1056.9 127.6 L1047.1 131.1 Z" />
+        <path d="M1136.6 132.0 L1148.0 118.0 L1159.4 132.0 L1152.1 133.0 L1143.9 134.5 Z" />
+        <path d="M1230.5 126.1 L1244.0 110.0 L1257.5 126.1 L1248.9 125.1 L1239.1 130.6 Z" />
+        <path d="M1328.7 136.3 L1340.0 124.0 L1351.3 136.3 L1344.1 136.3 L1335.9 139.8 Z" />
+        <path d="M1407.7 130.6 L1416.0 116.0 L1422.2 130.6 L1417.6 131.6 L1412.3 133.1 Z" />
+      </g>
+      <path fill="#C4A07A" d="M0 208 C200 188 400 222 600 202 C800 182 1000 218 1200 200 C1320 190 1388 208 1440 198 L1440 240 L0 240 Z" />
+    </svg>
+  </div>
   <header class="top">
     <div class="brand">
-      <div class="brand-name">Prior Art</div>
-      <div class="brand-sub" id="corpus-meta">Hack the North, 2014–2025</div>
+      <span class="brand-glow" aria-hidden="true"></span>
+      <div class="brand-name">Win the North</div>
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab is-on" data-view="explore" type="button">Explore</button>
       <button class="tab" data-view="findings" type="button">Findings</button>
     </nav>
   </header>
+  <img class="plank" src="/web/bg-table.png" alt="" aria-hidden="true" />
 
   <main id="view-explore" class="view explore">
     <aside class="rail">
-      <div class="rail-scroll">
+      <div class="rail-north" id="rail-north">
         <form id="ask-form" class="ask">
           <label for="ask-input">Describe your project.</label>
-          <textarea id="ask-input" name="text" rows="3" maxlength="4000" placeholder="A cane that maps icy sidewalks and speaks them before you reach them."></textarea>
-          <label class="ask-sub" for="ask-github">GitHub repo, optional.</label>
-          <input id="ask-github" name="github" type="text" maxlength="400" placeholder="https://github.com/you/your-hack" autocomplete="off" />
-          <label class="ask-sub" for="ask-devpost">This year's Devpost, optional.</label>
-          <input id="ask-devpost" name="devpost" type="text" maxlength="400" placeholder="hackthenorth2026.devpost.com" autocomplete="off" />
-          <p class="ask-hint">One sentence is enough. A public repo lets us read the README. A Devpost URL scores each sponsor track and says whether to strengthen it or add it.</p>
+          <textarea id="ask-input" name="text" rows="2" maxlength="4000" placeholder="A cane that maps icy sidewalks"></textarea>
+          <div class="ask-extras">
+            <label class="ask-sub" for="ask-github">GitHub, optional</label>
+            <input id="ask-github" name="github" type="text" maxlength="400" placeholder="github.com/you/hack" autocomplete="off" />
+            <label class="ask-sub" for="ask-devpost">Devpost, optional</label>
+            <input id="ask-devpost" name="devpost" type="text" maxlength="400" placeholder="hackthenorth2026.devpost.com" autocomplete="off" />
+          </div>
           <button type="submit" id="ask-btn">Place it</button>
           <p class="ask-status" id="ask-status" hidden></p>
         </form>
 
+        <div class="ask-result" id="ask-result" hidden>
+          <section class="prob" id="prob-panel" hidden>
+            <div class="prob-head">
+              <div class="prob-score">
+                <div class="prob-num" id="prob-num">-</div>
+                <div class="prob-label">Finalist Score</div>
+              </div>
+              <button type="button" id="ask-back" class="ask-back">Back</button>
+            </div>
+            <p class="prob-base" id="prob-base"></p>
+            <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
+            <section class="coach" id="coach-panel" hidden>
+              <p class="coach-lead">Hover a move to preview it on the map. Click to pin it, then click another to stack. Stacked scores are recalculated, not added.</p>
+              <label class="coach-time-toggle" for="coach-time-on">
+                <input type="checkbox" id="coach-time-on" checked />
+                Time-aware feasibility
+              </label>
+              <div class="coach-time" id="coach-time" hidden>
+                <p class="coach-hours" id="coach-hours"></p>
+                <div class="coach-budget-row">
+                  <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
+                  <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
+                </div>
+              </div>
+              <p class="empty" id="coach-status" hidden></p>
+              <div class="coach-stack" id="coach-stack" hidden></div>
+              <ol id="coach-list"></ol>
+            </section>
+            <div class="prob-caveat" id="prob-caveat"></div>
+            <div class="prob-meta" id="prob-meta"></div>
+          </section>
+        </div>
+      </div>
+
+      <div class="rail-split rail-split-y" id="split-rail-y" role="separator" aria-orientation="horizontal" aria-label="Resize answer and neighbours"></div>
+
+      <div class="rail-scroll" id="rail-scroll">
         <section class="twins" id="twins" hidden>
           <article class="twin twin-win" id="twin-win"></article>
           <article class="twin twin-lose" id="twin-lose"></article>
@@ -43,7 +136,10 @@
 
         <section class="neighbours" id="neighbours">
           <h2>Nearest neighbours</h2>
-          <p class="empty" id="neighbours-empty">Twelve years of submissions. Type an idea to see what it sits next to.</p>
+          <div class="neighbour-loader" id="neighbour-loader">
+            <img class="neighbour-mark" src="/web/moose-mark.png?v=2" alt="" />
+          </div>
+          <p class="empty" id="neighbours-empty" hidden></p>
           <ol id="neighbour-list"></ol>
         </section>
 
@@ -61,47 +157,46 @@
           <ol id="track-list"></ol>
         </section>
       </div>
-
-      <section class="coach" id="coach-panel" hidden>
-        <h2>Coach</h2>
-        <label class="coach-time-toggle" for="coach-time-on">
-          <input type="checkbox" id="coach-time-on" checked />
-          Time-aware feasibility
-        </label>
-        <div class="coach-time" id="coach-time" hidden>
-          <p class="coach-hours" id="coach-hours"></p>
-          <label class="coach-budget-label" for="coach-budget">Time budget (hours)</label>
-          <input id="coach-budget" type="number" min="0" max="168" step="0.5" inputmode="decimal" />
-        </div>
-        <p class="empty" id="coach-status" hidden></p>
-        <ol id="coach-list"></ol>
-      </section>
-
-      <section class="prob" id="prob-panel" hidden>
-        <div class="prob-num" id="prob-num">—</div>
-        <div class="prob-label">finalist probability</div>
-        <div class="prob-caveat" id="prob-caveat"></div>
-        <div class="prob-meta" id="prob-meta"></div>
-        <button type="button" id="coach-btn" class="coach-btn">Coach me</button>
-      </section>
     </aside>
-
+    <div class="rail-split rail-split-x" id="split-rail-x" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
     <section class="stage">
       <canvas id="map"></canvas>
       <div class="year-hud" id="year-hud">
-        <div class="year-hud-num" id="year-hud-num">2014–2025</div>
+        <div class="year-hud-num" id="year-hud-num">2014-2025</div>
         <div class="year-hud-sub" id="year-hud-sub"></div>
+        <div class="event-toggles" id="event-toggles" hidden>
+          <p class="event-toggles-label">Corpus</p>
+          <div class="event-toggles-row" id="event-toggles-row"></div>
+          <p class="event-toggles-note" id="event-toggles-note" hidden></p>
+        </div>
       </div>
+      <form class="theme-search" id="theme-search" autocomplete="off">
+        <label for="theme-input">Highlight the map by theme</label>
+        <div class="theme-search-row">
+          <input id="theme-input" type="search" maxlength="400" placeholder="wearables, LLMs, accessibility" />
+          <button type="submit" id="theme-btn">Highlight</button>
+        </div>
+        <p class="theme-search-note" id="theme-note" hidden></p>
+        <ul class="theme-legend" id="theme-legend" hidden></ul>
+      </form>
       <div class="zoom" id="zoom">
         <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
         <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
         <button type="button" id="zoom-reset" aria-label="Fit map">Fit</button>
         <span class="zoom-level" id="zoom-level">1×</span>
       </div>
+      <aside class="compare-pop" id="compare" hidden>
+        <header class="compare-pop-head">
+          <h2>Compare</h2>
+          <button type="button" class="compare-pop-close" id="compare-close" aria-label="Close comparison">×</button>
+        </header>
+        <div class="compare-pop-body" id="compare-body"></div>
+      </aside>
       <div class="legend">
-        <span><i class="swatch mute"></i> didn’t final</span>
+        <span><i class="swatch mute"></i> not a finalist</span>
         <span><i class="swatch accent"></i> finalist</span>
         <span><i class="swatch you"></i> your idea</span>
+        <span><i class="swatch preview"></i> preview</span>
       </div>
       <div class="scrubber" id="scrubber">
         <button type="button" id="scrub-play" class="scrub-play" aria-label="Play years">Play</button>
@@ -121,6 +216,34 @@
     <div id="charts" class="charts"></div>
   </main>
 
-  <script src="/web/app.js?v=27"></script>
+  <button type="button" class="chat-fab" id="chat-fab" aria-label="Open chat" aria-expanded="false" aria-controls="chat-panel">
+    <svg class="chat-fab-bubble" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M4.5 3.75h15a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1 -2.25 2.25H9.62l-3.87 3.1a.75.75 0 0 1-1.25-.56v-2.54H4.5A2.25 2.25 0 0 1 2.25 15V6A2.25 2.25 0 0 1 4.5 3.75Z"/>
+    </svg>
+    <img class="chat-fab-goose" src="/web/goose.png" alt="" aria-hidden="true" />
+  </button>
+
+  <section class="chat-dock" id="chat-panel" hidden>
+    <header class="chat-dock-head">
+      <div>
+        <h2>Chat</h2>
+        <p class="chat-dock-sub">Ask how to sharpen the idea. Scores still come from Place it.</p>
+      </div>
+      <button type="button" class="chat-dock-close" id="chat-close" aria-label="Close chat">×</button>
+    </header>
+    <p class="empty" id="chat-hint">Place an idea first, then ask how to sharpen it. Chat will not invent a score.</p>
+    <ol id="chat-list"></ol>
+    <form id="chat-form" class="chat-form">
+      <textarea id="chat-input" rows="1" maxlength="2000" placeholder="How do I make this a stronger hardware project?" aria-label="Message"></textarea>
+      <button type="submit" id="chat-btn" aria-label="Send">Send</button>
+      <p class="ask-status" id="chat-status" hidden></p>
+    </form>
+  </section>
+
+  <div class="cursor-moose" id="cursor-moose" hidden aria-hidden="true">
+    <img src="/web/moose-mark.png?v=2" alt="" />
+  </div>
+
+  <script src="/web/app.js?v=59"></script>
 </body>
 </html>
