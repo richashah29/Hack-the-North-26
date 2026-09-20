@@ -1,4 +1,4 @@
-# Prior Art
+# Win the North
 
 Every Hack the North project since 2014, in one searchable pile. Type in an idea
 and find out whether someone already built it, and whether they made the top 12.
@@ -90,8 +90,3 @@ To rebuild the corpus itself from scratch, that's `src/scrape.py` then
 `/api/ask` uses OpenAI `text-embedding-3-small` when a key is present and
 embeddings are on disk. If that call fails or times out (10s), neighbours come from
 a local TF-IDF index instead of a 500.
-
-## Who did what
-
-Sara built the app ([SPEC.md](SPEC.md)). Richa built the corpus
-([RICHA.md](RICHA.md)). The join key is `slug`.
